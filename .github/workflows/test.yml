@@ -1,0 +1,59 @@
+name: CI
+
+permissions: {}
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    name: Foundry project
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.7.1
+
+      - name: Show Forge version
+        run: forge --version
+
+      - name: Run Forge fmt
+        run: forge fmt --check
+
+      - name: Run Forge build
+        run: forge build --sizes
+
+      - name: Run Forge tests
+        run: forge test -vvv
+        env:
+          FOUNDRY_PROFILE: ci
+
+      - name: Check coverage threshold
+        run: |
+          forge coverage --no-match-coverage "script|test" --report summary | tee coverage.txt
+          python3 - <<'PY'
+          import re, sys
+          total = [l for l in open("coverage.txt") if l.startswith("| Total")][0]
+          lines = float(re.search(r"([\d.]+)%", total).group(1))
+          print(f"line coverage: {lines}%")
+          sys.exit(0 if lines >= 95 else 1)
+          PY
+
+      - name: Check gas snapshot
+        run: forge snapshot --check
+
+      - name: Run Slither
+        uses: crytic/slither-action@v0.4.0
+        with:
+          slither-args: --exclude-dependencies --config-file slither.config.json
+          fail-on: low
