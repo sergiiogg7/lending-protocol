@@ -1,0 +1,40 @@
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.24;
+
+import {Script, console} from "forge-std/Script.sol";
+import {LendingProtocol} from "../src/LendingProtocol.sol";
+import {MockToken} from "../test/mocks/MockToken.sol";
+
+/// @dev Local-only deploy for manual testing on Anvil (run it with Anvil's account #0 key).
+///      Deploys the protocol, two mock tokens (USDC, WETH, 18 decimals) with active markets, and gives each of
+///      Anvil's accounts #1 to #3 some tokens.
+contract LocalDeploy is Script {
+    uint256 constant TOKENS_PER_ACCOUNT = 100_000 ether;
+    uint256 constant COLLATERAL_FACTOR = 8000;
+
+    function run() external {
+        address[3] memory users = [
+            0x70997970C51812dc3A010C7d01b50e0d17dc79C8,
+            0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC,
+            0x90F79bf6EB2c4f870365E785982E1f101E93b906
+        ];
+
+        vm.startBroadcast();
+        LendingProtocol lending = new LendingProtocol();
+        MockToken usdc = new MockToken("USD Coin", "USDC", 18, 0);
+        MockToken weth = new MockToken("Wrapped Ether", "WETH", 18, 0);
+
+        lending.addMarket(address(usdc), COLLATERAL_FACTOR, 500, 800);
+        lending.addMarket(address(weth), COLLATERAL_FACTOR, 500, 800);
+
+        for (uint256 i = 0; i < users.length; i++) {
+            usdc.mint(users[i], TOKENS_PER_ACCOUNT);
+            weth.mint(users[i], TOKENS_PER_ACCOUNT);
+        }
+        vm.stopBroadcast();
+
+        console.log("LendingProtocol:", address(lending));
+        console.log("USDC:", address(usdc));
+        console.log("WETH:", address(weth));
+    }
+}
