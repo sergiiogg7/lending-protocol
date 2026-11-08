@@ -35,6 +35,7 @@ One contract in `src/`: `LendingProtocol` (`ReentrancyGuard`, `Pausable`, `Ownab
 | `LendingProtocolFuzz.t.sol` | Fuzz tests |
 | `LendingProtocolInvariant.t.sol` | Invariant tests with a handler and ghost variables |
 | `LendingProtocolRisk.t.sol` | Risk model: `ltv`, `liquidationThreshold`, health factor, withdrawals, end-to-end scenario |
+| `LendingProtocolLiquidity.t.sol` | Available liquidity limits `borrow` and `withdraw`; borrowing the deposited token is allowed |
 | `LendingProtocolLiquidation.t.sol` | Liquidation: close factor, bonus, liquidity, bad debt, `isActive`, fuzz on the health factor |
 | `LendingProtocolOracle.t.sol` | How the protocol uses the oracle |
 | `mocks/MockPriceOracle.sol` | Settable USD price source (tests and `LocalDeploy` only) |

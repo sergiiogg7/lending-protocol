@@ -89,7 +89,7 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
     error InsufficientDeposit();
     /// @notice The withdrawal would leave the health factor below 1.
     error WithdrawalUnsafe();
-    /// @notice The market does not hold enough supply for the borrow.
+    /// @notice The market does not have enough available liquidity (supplied minus borrowed) for the operation.
     error InsufficientLiquidity();
     /// @notice The borrow would exceed the borrowing power given by the LTV of the collateral.
     error BorrowExceedsCollateral();
@@ -246,6 +246,7 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
     function withdraw(address token, uint256 amount) external nonReentrant onlyActiveMarket(token) {
         if (amount == 0) revert ZeroAmount();
         if (userDeposits[msg.sender][token] < amount) revert InsufficientDeposit();
+        if (getAvailableLiquidity(token) < amount) revert InsufficientLiquidity();
         if (!canWithdraw(msg.sender, token, amount)) revert WithdrawalUnsafe();
 
         userDeposits[msg.sender][token] -= amount;
@@ -268,7 +269,7 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
      */
     function borrow(address token, uint256 amount) external nonReentrant whenNotPaused onlyActiveMarket(token) {
         if (amount == 0) revert ZeroAmount();
-        if (markets[token].totalSupply < amount) revert InsufficientLiquidity();
+        if (getAvailableLiquidity(token) < amount) revert InsufficientLiquidity();
         if (!canBorrow(msg.sender, token, amount)) revert BorrowExceedsCollateral();
 
         userBorrows[msg.sender][token] += amount;
@@ -375,10 +376,7 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
         if (userDeposits[user][collateralToken] < collateralSeized) revert InsufficientCollateral();
 
         // The contract must hold the collateral that is not lent out
-        Market storage collateralMarket = markets[collateralToken];
-        if (collateralMarket.totalSupply - collateralMarket.totalBorrow < collateralSeized) {
-            revert InsufficientLiquidity();
-        }
+        if (getAvailableLiquidity(collateralToken) < collateralSeized) revert InsufficientLiquidity();
 
         // Repay the user's debt
         userBorrows[user][debtToken] -= debtToCover;
@@ -388,7 +386,7 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
         // Seize the collateral
         userDeposits[user][collateralToken] -= collateralSeized;
         users[user].totalDeposited -= collateralSeized;
-        collateralMarket.totalSupply -= collateralSeized;
+        markets[collateralToken].totalSupply -= collateralSeized;
 
         _refreshActive(user);
 
@@ -552,6 +550,15 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
      */
     function getMarket(address token) external view returns (Market memory) {
         return markets[token];
+    }
+
+    /**
+     * @notice Cash of a market that is not lent out and can be borrowed or withdrawn right now
+     * @param token The token address
+     * @return The available liquidity: total supplied minus total borrowed
+     */
+    function getAvailableLiquidity(address token) public view returns (uint256) {
+        return markets[token].totalSupply - markets[token].totalBorrow;
     }
 
     /**
