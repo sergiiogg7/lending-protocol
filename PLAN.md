@@ -5,6 +5,14 @@
 | 2026-11-05 | Project created with `forge init` from the downloaded `lending-borrow-protocol`. Best practices applied: pinned Foundry config, CI, Slither config, custom errors, `Ownable2Step`, named imports via remappings, NatSpec, `emergencyRecover` event, exit paths open while paused, mock moved to `test/mocks`, unit/fuzz/invariant tests (72), 100 % line coverage, deploy scripts, README, SECURITY (known bugs listed, not fixed). |
 | 2026-11-08 | Contract walkthrough done. Phase 2 roadmap defined below (Aave-inspired, simplified). |
 
+| 2026-11-08 | Phase 2 closed: the 14 findings of the original code are fixed (see `SECURITY.md`). 153 tests, 100 % line coverage, Slither with 0 findings. |
+
+## Pending (not part of phase 2)
+
+1. A real oracle: a Chainlink adapter for `IPriceOracle` with staleness checks.
+2. Deployment on Sepolia with verified contracts, using the adapter.
+3. A frontend (Vite, React, viem and wagmi, as in `staking-protocol`).
+
 ## Phase 2 roadmap
 
 Goal: understand lending and borrowing by building a simplified Aave V3-style core. Each step: explain first, write the failing test, fix, update `SECURITY.md`. Numbers refer to `SECURITY.md`.
@@ -18,7 +26,7 @@ Goal: understand lending and borrowing by building a simplified Aave V3-style co
 | 5 | #7, #12 (done 2026-11-08) | Interest: utilization-based borrow rate (kinked curve), supply rate from borrow rate and utilization, per-market liquidity and borrow indexes. | The heart of Aave and Compound. |
 | 6 | #4, #5 (done 2026-11-08) | Owner limits: `emergencyRecover` only for surplus (never user funds), bounded parameter changes. | Centralization risk. |
 | 7 | #8 (done 2026-11-08) | Remove `depositWithSignature` (not gasless, adds attack surface). | Simplify. |
-| 8 | #10, #11 (done 2026-11-08), #14 (the `User` struct part done 2026-11-08) | Token validation, cap on markets, cleanup. | Hardening. |
+| 8 | #10, #11, #14 (done 2026-11-08) | Token validation, cap on markets, cleanup. | Hardening. |
 
 ## Deliberately left out (Aave has it, it adds difficulty but little understanding)
 

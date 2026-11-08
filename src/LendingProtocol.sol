@@ -12,10 +12,10 @@ import {Ownable, Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step
 
 /**
  * @title LendingProtocol
- * @notice A DeFi lending and borrowing protocol that allows users to:
- * - Deposit tokens to earn interest
- * - Borrow tokens against their deposited collateral
- * - Manage collateralization ratios and liquidation
+ * @notice A lending and borrowing protocol modelled on Aave. Users deposit tokens to earn interest and borrow against
+ * their deposits, up to the loan-to-value of each collateral; every asset is valued in USD through an oracle. A position
+ * whose health factor falls below 1 can be liquidated, and the owner can only change risk parameters in ways that give
+ * users notice when they can hurt existing positions.
  */
 contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
     using SafeERC20 for IERC20;
@@ -24,7 +24,6 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
     /// @dev Stored state of a market. Supply and borrow are SCALED: amount / index at the time of the operation.
     ///      Real amounts are scaled * index / RAY, so one index grows the interest of every user at once.
     struct MarketState {
-        IERC20 token; // The token being lent/borrowed
         uint256 scaledSupply; // Sum of the scaled deposits of all users
         uint256 scaledBorrow; // Sum of the scaled debts of all users
         uint256 liquidityIndex; // Grows with the supply rate; deposits are worth scaled * liquidityIndex
@@ -37,7 +36,6 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
 
     /// @notice A market as returned by `getMarket`: real amounts and indexes projected to the current block.
     struct Market {
-        IERC20 token;
         uint256 totalSupply; // Everything supplied, interest included
         uint256 totalBorrow; // Everything owed, interest included
         uint256 liquidityIndex;
@@ -184,7 +182,6 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
         _validateToken(token);
 
         markets[token] = MarketState({
-            token: IERC20(token),
             scaledSupply: 0,
             scaledBorrow: 0,
             liquidityIndex: RAY,
@@ -681,7 +678,6 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
         MarketState storage market = markets[token];
         (uint256 liquidityIndex, uint256 borrowIndex) = _indexes(market);
         return Market({
-            token: market.token,
             totalSupply: Math.mulDiv(market.scaledSupply, liquidityIndex, RAY),
             totalBorrow: Math.mulDiv(market.scaledBorrow, borrowIndex, RAY, Math.Rounding.Ceil),
             liquidityIndex: liquidityIndex,

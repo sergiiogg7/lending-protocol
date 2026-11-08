@@ -7,7 +7,7 @@ A minimal lending and borrowing protocol on Ethereum, built with Foundry and mod
 ![Foundry](https://img.shields.io/badge/Built%20with-Foundry-orange)
 ![Tests 153](https://img.shields.io/badge/tests-153%20passing-brightgreen)
 
-> **Not audited and not safe for real funds.** The remaining open points are limitations by design and are listed in [SECURITY.md](SECURITY.md).
+> **Not audited and not safe for real funds.** The remaining open points are limitations (a mock-only oracle, bad debt without a safety module, a centralised owner) and are listed in [SECURITY.md](SECURITY.md#limitations-that-remain).
 
 ## How it works
 
