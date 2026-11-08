@@ -7,18 +7,13 @@ import {LendingProtocol} from "../src/LendingProtocol.sol";
 import {MockToken} from "./mocks/MockToken.sol";
 import {MockPriceOracle} from "./mocks/MockPriceOracle.sol";
 
-/// @dev Drives the protocol with random user actions and keeps ghost sums of what it should hold.
+/// @dev Drives the protocol with random user actions, time jumps and risk changes.
 contract InvHandler is Test {
     LendingProtocol public lending;
     MockToken public usdc;
     MockToken public weth;
     address public owner;
     address[] public actors;
-
-    uint256 public ghostDepositsUsdc;
-    uint256 public ghostDepositsWeth;
-    uint256 public ghostBorrowsUsdc;
-    uint256 public ghostBorrowsWeth;
 
     constructor(LendingProtocol _lending, MockToken _usdc, MockToken _weth, address _owner, address[] memory _actors) {
         lending = _lending;
@@ -36,23 +31,10 @@ contract InvHandler is Test {
         return seed % 2 == 0 ? usdc : weth;
     }
 
-    function _addDeposit(MockToken t, uint256 a) internal {
-        if (t == usdc) ghostDepositsUsdc += a;
-        else ghostDepositsWeth += a;
-    }
-
-    function _addBorrow(MockToken t, uint256 a, bool up) internal {
-        if (t == usdc) ghostBorrowsUsdc = up ? ghostBorrowsUsdc + a : ghostBorrowsUsdc - a;
-        else ghostBorrowsWeth = up ? ghostBorrowsWeth + a : ghostBorrowsWeth - a;
-    }
-
     function deposit(uint256 actorSeed, uint256 tokenSeed, uint256 amount) external {
-        address a = _actor(actorSeed);
-        MockToken t = _token(tokenSeed);
         amount = bound(amount, 1, 1_000 ether);
-        vm.prank(a);
-        lending.deposit(address(t), amount);
-        _addDeposit(t, amount);
+        vm.prank(_actor(actorSeed));
+        try lending.deposit(address(_token(tokenSeed)), amount) {} catch {}
     }
 
     function withdraw(uint256 actorSeed, uint256 tokenSeed, uint256 amount) external {
@@ -62,20 +44,18 @@ contract InvHandler is Test {
         if (max == 0) return;
         amount = bound(amount, 1, max);
         vm.prank(a);
-        try lending.withdraw(address(t), amount) {
-            if (t == usdc) ghostDepositsUsdc -= amount;
-            else ghostDepositsWeth -= amount;
-        } catch {}
+        try lending.withdraw(address(t), amount) {} catch {}
+    }
+
+    function withdrawAll(uint256 actorSeed, uint256 tokenSeed) external {
+        vm.prank(_actor(actorSeed));
+        try lending.withdraw(address(_token(tokenSeed)), type(uint256).max) {} catch {}
     }
 
     function borrow(uint256 actorSeed, uint256 tokenSeed, uint256 amount) external {
-        address a = _actor(actorSeed);
-        MockToken t = _token(tokenSeed);
         amount = bound(amount, 1, 1_000 ether);
-        vm.prank(a);
-        try lending.borrow(address(t), amount) {
-            _addBorrow(t, amount, true);
-        } catch {}
+        vm.prank(_actor(actorSeed));
+        try lending.borrow(address(_token(tokenSeed)), amount) {} catch {}
     }
 
     function repay(uint256 actorSeed, uint256 tokenSeed, uint256 amount) external {
@@ -85,12 +65,33 @@ contract InvHandler is Test {
         if (max == 0) return;
         amount = bound(amount, 1, max);
         vm.prank(a);
-        lending.repay(address(t), amount);
-        _addBorrow(t, amount, false);
+        try lending.repay(address(t), amount) {} catch {}
     }
 
-    /// @dev Lowers collateral factors so that some positions become liquidatable.
-    function crashCollateralFactor(uint256 factor) external {
+    function repayAll(uint256 actorSeed, uint256 tokenSeed) external {
+        vm.prank(_actor(actorSeed));
+        try lending.repay(address(_token(tokenSeed)), type(uint256).max) {} catch {}
+    }
+
+    function liquidate(uint256 liquidatorSeed, uint256 userSeed, uint256 tokenSeed, uint256 amount) external {
+        address liq = _actor(liquidatorSeed);
+        address victim = _actor(userSeed);
+        MockToken t = _token(tokenSeed);
+        MockToken collateral = t == usdc ? weth : usdc;
+        uint256 max = lending.getUserBorrow(victim, address(t));
+        if (max == 0 || liq == victim) return;
+        amount = bound(amount, 1, max);
+        vm.prank(liq);
+        try lending.liquidate(address(collateral), address(t), victim, amount) {} catch {}
+    }
+
+    /// @dev Lets interest accrue.
+    function warp(uint256 secondsToSkip) external {
+        skip(bound(secondsToSkip, 1, 90 days));
+    }
+
+    /// @dev Lowers the thresholds so that some positions become liquidatable.
+    function crashThresholds(uint256 factor) external {
         factor = bound(factor, 0, 8000);
         vm.startPrank(owner);
         lending.updateMarket(address(usdc), factor, factor);
@@ -98,39 +99,21 @@ contract InvHandler is Test {
         vm.stopPrank();
     }
 
-    function liquidate(uint256 liquidatorSeed, uint256 userSeed, uint256 tokenSeed, uint256 amount) external {
-        address liq = _actor(liquidatorSeed);
-        address victim = _actor(userSeed);
-        MockToken t = _token(tokenSeed);
-        uint256 max = lending.getUserBorrow(victim, address(t));
-        if (max == 0 || liq == victim) return;
-        amount = bound(amount, 1, max);
-
-        MockToken collateral = t == usdc ? weth : usdc;
-        uint256 borrowBefore = lending.getMarket(address(t)).totalBorrow;
-        uint256 depUsdcBefore = lending.getMarket(address(usdc)).totalSupply;
-        uint256 depWethBefore = lending.getMarket(address(weth)).totalSupply;
-        vm.prank(liq);
-        try lending.liquidate(address(collateral), address(t), victim, amount) {
-            // the close factor may cap the amount, so read what was really repaid
-            _addBorrow(t, borrowBefore - lending.getMarket(address(t)).totalBorrow, false);
-            ghostDepositsUsdc -= depUsdcBefore - lending.getMarket(address(usdc)).totalSupply;
-            ghostDepositsWeth -= depWethBefore - lending.getMarket(address(weth)).totalSupply;
-        } catch {}
-    }
-
     function actorCount() external view returns (uint256) {
         return actors.length;
     }
 }
 
-/// @dev Invariants of the lending accounting.
+/// @dev Invariants of the lending accounting, with interest accruing over time.
 contract LendingProtocolInvariantTest is StdInvariant, Test {
     LendingProtocol internal lending;
     MockToken internal usdc;
     MockToken internal weth;
     InvHandler internal handler;
     address[] internal actors;
+
+    /// @dev Rounding is always in favour of the protocol, so balances can differ from totals by a few wei per user.
+    uint256 internal constant DUST = 8;
 
     function setUp() public {
         address owner = makeAddr("owner");
@@ -161,41 +144,62 @@ contract LendingProtocolInvariantTest is StdInvariant, Test {
         targetContract(address(handler));
     }
 
-    /// @notice Market totals equal the sum of per-user balances.
-    function invariant_MarketTotalsMatchUserSums() public view {
-        uint256 depU;
-        uint256 depW;
-        uint256 borU;
-        uint256 borW;
+    function _sumDeposits(MockToken token) internal view returns (uint256 sum) {
         for (uint256 i = 0; i < actors.length; i++) {
-            depU += lending.getUserDeposit(actors[i], address(usdc));
-            depW += lending.getUserDeposit(actors[i], address(weth));
-            borU += lending.getUserBorrow(actors[i], address(usdc));
-            borW += lending.getUserBorrow(actors[i], address(weth));
+            sum += lending.getUserDeposit(actors[i], address(token));
         }
-        assertEq(lending.getMarket(address(usdc)).totalSupply, depU);
-        assertEq(lending.getMarket(address(weth)).totalSupply, depW);
-        assertEq(lending.getMarket(address(usdc)).totalBorrow, borU);
-        assertEq(lending.getMarket(address(weth)).totalBorrow, borW);
     }
 
-    /// @notice Tokens held by the contract equal total supply minus total borrow, for each market.
-    function invariant_BalanceEqualsSupplyMinusBorrow() public view {
-        assertEq(
-            usdc.balanceOf(address(lending)),
-            lending.getMarket(address(usdc)).totalSupply - lending.getMarket(address(usdc)).totalBorrow
-        );
-        assertEq(
-            weth.balanceOf(address(lending)),
-            lending.getMarket(address(weth)).totalSupply - lending.getMarket(address(weth)).totalBorrow
-        );
+    function _sumBorrows(MockToken token) internal view returns (uint256 sum) {
+        for (uint256 i = 0; i < actors.length; i++) {
+            sum += lending.getUserBorrow(actors[i], address(token));
+        }
     }
 
-    /// @notice Ghost sums tracked by the handler equal the market totals.
-    function invariant_GhostSumsMatchMarkets() public view {
-        assertEq(lending.getMarket(address(usdc)).totalSupply, handler.ghostDepositsUsdc());
-        assertEq(lending.getMarket(address(weth)).totalSupply, handler.ghostDepositsWeth());
-        assertEq(lending.getMarket(address(usdc)).totalBorrow, handler.ghostBorrowsUsdc());
-        assertEq(lending.getMarket(address(weth)).totalBorrow, handler.ghostBorrowsWeth());
+    function _checkMarketTotals(MockToken token) internal view {
+        LendingProtocol.Market memory market = lending.getMarket(address(token));
+        uint256 deposits = _sumDeposits(token);
+        uint256 borrows = _sumBorrows(token);
+        // each user balance is rounded down (deposits) or up (debts), so the sums stay within dust of the totals
+        assertLe(deposits, market.totalSupply);
+        assertGe(deposits + DUST, market.totalSupply);
+        assertGe(borrows, market.totalBorrow);
+        assertLe(borrows, market.totalBorrow + DUST);
+    }
+
+    /// @notice Market totals equal the sum of the user balances, interest included (up to rounding).
+    function invariant_MarketTotalsMatchUserSums() public view {
+        _checkMarketTotals(usdc);
+        _checkMarketTotals(weth);
+    }
+
+    function _checkSolvency(MockToken token) internal view {
+        LendingProtocol.Market memory market = lending.getMarket(address(token));
+        if (market.totalSupply > market.totalBorrow) {
+            // The cash held covers what is supplied and not lent out. The indexes have 18 decimals, so every accrual
+            // can be off by 1e-18 of the balance in either direction (Aave uses 27 decimals to make this negligible):
+            // allow one part in 1e15 of the supply on top of a few wei.
+            uint256 tolerance = DUST + market.totalSupply / 1e15;
+            assertGe(token.balanceOf(address(lending)) + tolerance, market.totalSupply - market.totalBorrow);
+        }
+    }
+
+    /// @notice The contract holds the cash that backs supplied minus borrowed, interest being owed but not yet paid.
+    function invariant_BalanceBacksSupplyMinusBorrow() public view {
+        _checkSolvency(usdc);
+        _checkSolvency(weth);
+    }
+
+    function _checkIndexes(MockToken token) internal view {
+        LendingProtocol.Market memory market = lending.getMarket(address(token));
+        assertGe(market.liquidityIndex, 1e18);
+        // borrowers pay at least what lenders earn
+        assertGe(market.borrowIndex, market.liquidityIndex);
+    }
+
+    /// @notice Indexes never go below 1 and the borrow index is never below the liquidity index.
+    function invariant_IndexesOnlyGrow() public view {
+        _checkIndexes(usdc);
+        _checkIndexes(weth);
     }
 }

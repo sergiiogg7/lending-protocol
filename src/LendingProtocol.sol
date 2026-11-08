@@ -26,13 +26,31 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
     using MessageHashUtils for bytes32;
 
     // Structs
-    struct Market {
+    /// @dev Stored state of a market. Supply and borrow are SCALED: amount / index at the time of the operation.
+    ///      Real amounts are scaled * index / WAD, so one index grows the interest of every user at once.
+    struct MarketState {
         IERC20 token; // The token being lent/borrowed
-        uint256 totalSupply; // Total amount supplied to this market
-        uint256 totalBorrow; // Total amount borrowed from this market
+        uint256 scaledSupply; // Sum of the scaled deposits of all users
+        uint256 scaledBorrow; // Sum of the scaled debts of all users
+        uint256 liquidityIndex; // Grows with the supply rate; deposits are worth scaled * liquidityIndex
+        uint256 borrowIndex; // Grows with the borrow rate; debts are worth scaled * borrowIndex
+        uint256 lastUpdateTimestamp; // When the indexes were last updated
         uint256 ltv; // Max loan-to-value in basis points: how much can be borrowed against this collateral
         uint256 liquidationThreshold; // Basis points of this collateral that count for the health factor
         bool isActive; // Whether this market is active
+    }
+
+    /// @notice A market as returned by `getMarket`: real amounts and indexes projected to the current block.
+    struct Market {
+        IERC20 token;
+        uint256 totalSupply; // Everything supplied, interest included
+        uint256 totalBorrow; // Everything owed, interest included
+        uint256 liquidityIndex;
+        uint256 borrowIndex;
+        uint256 lastUpdateTimestamp;
+        uint256 ltv;
+        uint256 liquidationThreshold;
+        bool isActive;
     }
 
     /// @dev A user position valued in USD (8 decimals). Collateral is rounded down and debt rounded up.
@@ -49,9 +67,9 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
     }
 
     // State variables
-    mapping(address => mapping(address => uint256)) public userDeposits; // user => token => amount
-    mapping(address => mapping(address => uint256)) public userBorrows; // user => token => amount
-    mapping(address => Market) public markets;
+    mapping(address => mapping(address => uint256)) internal scaledDeposits; // user => token => scaled amount
+    mapping(address => mapping(address => uint256)) internal scaledBorrows; // user => token => scaled amount
+    mapping(address => MarketState) internal markets;
     mapping(address => uint256) public userNonces;
 
     /// @notice Price source: USD per whole token, 8 decimals. Immutable on purpose.
@@ -67,7 +85,8 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
     uint256 public constant RATE_SLOPE_1 = 0.04e18; // rate added going from 0% to the optimal utilization
     uint256 public constant RATE_SLOPE_2 = 0.75e18; // rate added going from the optimal utilization to 100%
     uint256 public constant BASIS_POINTS = 10000;
-    uint256 public constant WAD = 1e18; // scale of the health factor: 1e18 means a health factor of 1
+    uint256 public constant WAD = 1e18; // scale of the health factor, rates and indexes: 1e18 means 1
+    uint256 public constant SECONDS_PER_YEAR = 365 days;
 
     // Errors
     /// @notice A required address argument is the zero address.
@@ -161,10 +180,13 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
         _checkRiskParameters(ltv, liquidationThreshold);
         if (markets[token].isActive) revert MarketAlreadyExists();
 
-        markets[token] = Market({
+        markets[token] = MarketState({
             token: IERC20(token),
-            totalSupply: 0,
-            totalBorrow: 0,
+            scaledSupply: 0,
+            scaledBorrow: 0,
+            liquidityIndex: WAD,
+            borrowIndex: WAD,
+            lastUpdateTimestamp: block.timestamp,
             ltv: ltv,
             liquidationThreshold: liquidationThreshold,
             isActive: true
@@ -199,32 +221,26 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
      * @param amount The amount to deposit
      */
     function deposit(address token, uint256 amount) external nonReentrant whenNotPaused onlyActiveMarket(token) {
-        if (amount == 0) revert ZeroAmount();
-
-        userDeposits[msg.sender][token] += amount;
-
-        markets[token].totalSupply += amount;
-
-        // Interaction last (Checks-Effects-Interactions)
-        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
-
-        emit Deposit(msg.sender, token, amount);
+        _deposit(token, amount);
     }
 
     /**
      * @notice Withdraw deposited tokens
      * @param token The token to withdraw
-     * @param amount The amount to withdraw
+     * @param amount The amount to withdraw, or `type(uint256).max` for the whole balance including interest
      */
     function withdraw(address token, uint256 amount) external nonReentrant onlyActiveMarket(token) {
         if (amount == 0) revert ZeroAmount();
-        if (userDeposits[msg.sender][token] < amount) revert InsufficientDeposit();
+        _accrue(token);
+
+        uint256 balance = _userDeposit(msg.sender, token);
+        if (amount == type(uint256).max) amount = balance;
+        if (amount == 0) revert ZeroAmount();
+        if (balance < amount) revert InsufficientDeposit();
         if (getAvailableLiquidity(token) < amount) revert InsufficientLiquidity();
         if (!canWithdraw(msg.sender, token, amount)) revert WithdrawalUnsafe();
 
-        userDeposits[msg.sender][token] -= amount;
-
-        markets[token].totalSupply -= amount;
+        _burnDeposit(msg.sender, token, amount);
 
         IERC20(token).safeTransfer(msg.sender, amount);
 
@@ -238,12 +254,14 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
      */
     function borrow(address token, uint256 amount) external nonReentrant whenNotPaused onlyActiveMarket(token) {
         if (amount == 0) revert ZeroAmount();
+        _accrue(token);
         if (getAvailableLiquidity(token) < amount) revert InsufficientLiquidity();
         if (!canBorrow(msg.sender, token, amount)) revert BorrowExceedsCollateral();
 
-        userBorrows[msg.sender][token] += amount;
-
-        markets[token].totalBorrow += amount;
+        // The debt is rounded up: the borrower never owes less than was lent
+        uint256 scaled = Math.mulDiv(amount, WAD, markets[token].borrowIndex, Math.Rounding.Ceil);
+        scaledBorrows[msg.sender][token] += scaled;
+        markets[token].scaledBorrow += scaled;
 
         IERC20(token).safeTransfer(msg.sender, amount);
 
@@ -253,15 +271,18 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
     /**
      * @notice Repay borrowed tokens
      * @param token The token to repay
-     * @param amount The amount to repay
+     * @param amount The amount to repay, or `type(uint256).max` for the whole debt including interest
      */
     function repay(address token, uint256 amount) external nonReentrant onlyActiveMarket(token) {
         if (amount == 0) revert ZeroAmount();
-        if (userBorrows[msg.sender][token] < amount) revert InsufficientBorrow();
+        _accrue(token);
 
-        userBorrows[msg.sender][token] -= amount;
+        uint256 debt = _userBorrow(msg.sender, token);
+        if (amount == type(uint256).max) amount = debt;
+        if (amount == 0) revert ZeroAmount();
+        if (debt < amount) revert InsufficientBorrow();
 
-        markets[token].totalBorrow -= amount;
+        _burnDebt(msg.sender, token, amount);
 
         // Interaction last (Checks-Effects-Interactions)
         IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
@@ -290,14 +311,7 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
         address signer = ethSignedMessageHash.recover(sigData.signature);
         if (signer != msg.sender) revert InvalidSignature();
 
-        userDeposits[msg.sender][token] += amount;
-
-        markets[token].totalSupply += amount;
-
-        // Interaction last (Checks-Effects-Interactions)
-        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
-
-        emit Deposit(msg.sender, token, amount);
+        _deposit(token, amount);
     }
 
     /**
@@ -318,11 +332,13 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
         onlyActiveMarket(debtToken)
     {
         if (debtToCover == 0) revert ZeroAmount();
+        _accrue(debtToken);
+        _accrue(collateralToken);
 
         uint256 healthFactor = getHealthFactor(user);
         if (healthFactor >= WAD) revert NotLiquidatable();
 
-        uint256 userDebt = userBorrows[user][debtToken];
+        uint256 userDebt = _userBorrow(user, debtToken);
         if (userDebt == 0) revert NoDebtToLiquidate();
 
         // Close factor: half of the debt (rounded up, so tiny debts can be cleared), or all of it when deep underwater
@@ -332,18 +348,13 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
         if (debtToCover > maxDebtToCover) debtToCover = maxDebtToCover;
 
         uint256 collateralSeized = _collateralToSeize(collateralToken, debtToken, debtToCover);
-        if (userDeposits[user][collateralToken] < collateralSeized) revert InsufficientCollateral();
+        if (_userDeposit(user, collateralToken) < collateralSeized) revert InsufficientCollateral();
 
         // The contract must hold the collateral that is not lent out
         if (getAvailableLiquidity(collateralToken) < collateralSeized) revert InsufficientLiquidity();
 
-        // Repay the user's debt
-        userBorrows[user][debtToken] -= debtToCover;
-        markets[debtToken].totalBorrow -= debtToCover;
-
-        // Seize the collateral
-        userDeposits[user][collateralToken] -= collateralSeized;
-        markets[collateralToken].totalSupply -= collateralSeized;
+        _burnDebt(user, debtToken, debtToCover);
+        _burnDeposit(user, collateralToken, collateralSeized);
 
         // Interactions last: take the debt tokens from the liquidator, then pay the seized collateral
         IERC20(debtToken).safeTransferFrom(msg.sender, address(this), debtToCover);
@@ -439,11 +450,11 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
     {
         for (uint256 i = 0; i < supportedTokens.length; i++) {
             address supportedToken = supportedTokens[i];
-            Market storage market = markets[supportedToken];
+            MarketState storage market = markets[supportedToken];
             if (!market.isActive) continue;
 
-            uint256 depositAmount = userDeposits[user][supportedToken];
-            uint256 borrowAmount = userBorrows[user][supportedToken];
+            uint256 depositAmount = _userDeposit(user, supportedToken);
+            uint256 borrowAmount = _userBorrow(user, supportedToken);
 
             if (supportedToken == token) {
                 depositAmount = depositAmount > withdrawn ? depositAmount - withdrawn : 0;
@@ -475,6 +486,99 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
         return Math.mulDiv(amount, oracle.getAssetPrice(token), 10 ** IERC20Metadata(token).decimals(), rounding);
     }
 
+    /// @dev Shared by `deposit` and `depositWithSignature`.
+    function _deposit(address token, uint256 amount) internal {
+        if (amount == 0) revert ZeroAmount();
+        _accrue(token);
+
+        // Rounded down: the depositor never gets a claim larger than what was handed over
+        uint256 scaled = Math.mulDiv(amount, WAD, markets[token].liquidityIndex);
+        if (scaled == 0) revert ZeroAmount();
+        scaledDeposits[msg.sender][token] += scaled;
+        markets[token].scaledSupply += scaled;
+
+        // Interaction last (Checks-Effects-Interactions)
+        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
+
+        emit Deposit(msg.sender, token, amount);
+    }
+
+    /// @dev Removes `amount` (real units) from a user deposit; the scaled amount is rounded up.
+    function _burnDeposit(address user, address token, uint256 amount) internal {
+        uint256 userScaled = scaledDeposits[user][token];
+        uint256 scaled = Math.mulDiv(amount, WAD, markets[token].liquidityIndex, Math.Rounding.Ceil);
+        if (scaled > userScaled) scaled = userScaled;
+        scaledDeposits[user][token] = userScaled - scaled;
+        markets[token].scaledSupply -= scaled;
+    }
+
+    /// @dev Removes `amount` (real units) from a user debt; the scaled amount is rounded down, so a repayment never
+    ///      erases more debt than was paid.
+    function _burnDebt(address user, address token, uint256 amount) internal {
+        uint256 userScaled = scaledBorrows[user][token];
+        uint256 scaled = Math.mulDiv(amount, WAD, markets[token].borrowIndex);
+        if (scaled > userScaled) scaled = userScaled;
+        if (scaled == 0) revert ZeroAmount();
+        scaledBorrows[user][token] = userScaled - scaled;
+        markets[token].scaledBorrow -= scaled;
+    }
+
+    /// @dev Brings the indexes of a market up to the current block, before its balances change.
+    function _accrue(address token) internal {
+        MarketState storage market = markets[token];
+        if (market.lastUpdateTimestamp == block.timestamp) return;
+        (market.liquidityIndex, market.borrowIndex) = _indexes(market);
+        market.lastUpdateTimestamp = block.timestamp;
+    }
+
+    /**
+     * @dev The indexes of a market projected to the current block, without writing them.
+     *      newIndex = index * (1 + rate * elapsed / year), with the rates of the last update (they only change when
+     *      someone interacts with the market). The borrow index is rounded up and the liquidity index down.
+     */
+    function _indexes(MarketState storage market) internal view returns (uint256 liquidityIndex, uint256 borrowIndex) {
+        liquidityIndex = market.liquidityIndex;
+        borrowIndex = market.borrowIndex;
+        uint256 elapsed = block.timestamp - market.lastUpdateTimestamp;
+        if (elapsed == 0) return (liquidityIndex, borrowIndex);
+
+        uint256 utilization = _utilization(market);
+        uint256 borrowRate = _borrowRate(utilization);
+        uint256 supplyRate = Math.mulDiv(borrowRate, utilization, WAD);
+        borrowIndex =
+            Math.mulDiv(borrowIndex, WAD + Math.mulDiv(borrowRate, elapsed, SECONDS_PER_YEAR), WAD, Math.Rounding.Ceil);
+        liquidityIndex = Math.mulDiv(liquidityIndex, WAD + Math.mulDiv(supplyRate, elapsed, SECONDS_PER_YEAR), WAD);
+    }
+
+    /// @dev Utilization from the stored indexes, capped at 100 %: rounding can leave the debt a wei above the supply.
+    function _utilization(MarketState storage market) internal view returns (uint256) {
+        uint256 supply = Math.mulDiv(market.scaledSupply, market.liquidityIndex, WAD);
+        if (supply == 0) return 0;
+        uint256 borrowed = Math.mulDiv(market.scaledBorrow, market.borrowIndex, WAD, Math.Rounding.Ceil);
+        return borrowed >= supply ? WAD : Math.mulDiv(borrowed, WAD, supply);
+    }
+
+    /// @dev The kinked rate curve; see `getBorrowRate`.
+    function _borrowRate(uint256 utilization) internal pure returns (uint256) {
+        if (utilization <= OPTIMAL_UTILIZATION) {
+            return BASE_BORROW_RATE + Math.mulDiv(RATE_SLOPE_1, utilization, OPTIMAL_UTILIZATION);
+        }
+        return BASE_BORROW_RATE + RATE_SLOPE_1
+            + Math.mulDiv(RATE_SLOPE_2, utilization - OPTIMAL_UTILIZATION, WAD - OPTIMAL_UTILIZATION);
+    }
+
+    /// @dev Real deposit of a user (interest included, rounded down) as of the current block.
+    function _userDeposit(address user, address token) internal view returns (uint256) {
+        (uint256 liquidityIndex,) = _indexes(markets[token]);
+        return Math.mulDiv(scaledDeposits[user][token], liquidityIndex, WAD);
+    }
+
+    /// @dev Real debt of a user (interest included, rounded up) as of the current block.
+    function _userBorrow(address user, address token) internal view returns (uint256) {
+        (, uint256 borrowIndex) = _indexes(markets[token]);
+        return Math.mulDiv(scaledBorrows[user][token], borrowIndex, WAD, Math.Rounding.Ceil);
+    }
+
     /// @dev Reverts unless `ltv <= liquidationThreshold` and `liquidationThreshold * (1 + bonus) <= 100 %`, so that
     ///      the collateral handed out by a liquidation never exceeds the value of the collateral backing the debt.
     function _checkRiskParameters(uint256 ltv, uint256 liquidationThreshold) internal pure {
@@ -494,32 +598,47 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
     }
 
     /**
-     * @notice Get market information
+     * @notice Get market information, with real amounts and indexes projected to the current block
      * @param token The token address
      * @return Market information
      */
     function getMarket(address token) external view returns (Market memory) {
-        return markets[token];
+        MarketState storage market = markets[token];
+        (uint256 liquidityIndex, uint256 borrowIndex) = _indexes(market);
+        return Market({
+            token: market.token,
+            totalSupply: Math.mulDiv(market.scaledSupply, liquidityIndex, WAD),
+            totalBorrow: Math.mulDiv(market.scaledBorrow, borrowIndex, WAD, Math.Rounding.Ceil),
+            liquidityIndex: liquidityIndex,
+            borrowIndex: borrowIndex,
+            lastUpdateTimestamp: market.lastUpdateTimestamp,
+            ltv: market.ltv,
+            liquidationThreshold: market.liquidationThreshold,
+            isActive: market.isActive
+        });
     }
 
     /**
      * @notice Cash of a market that is not lent out and can be borrowed or withdrawn right now
+     * @dev Supplied minus borrowed, interest included on both sides, as of the current block.
      * @param token The token address
-     * @return The available liquidity: total supplied minus total borrowed
+     * @return The available liquidity
      */
     function getAvailableLiquidity(address token) public view returns (uint256) {
-        return markets[token].totalSupply - markets[token].totalBorrow;
+        MarketState storage market = markets[token];
+        (uint256 liquidityIndex, uint256 borrowIndex) = _indexes(market);
+        uint256 supplied = Math.mulDiv(market.scaledSupply, liquidityIndex, WAD);
+        uint256 borrowed = Math.mulDiv(market.scaledBorrow, borrowIndex, WAD, Math.Rounding.Ceil);
+        return supplied > borrowed ? supplied - borrowed : 0;
     }
 
     /**
-     * @notice Share of the supplied tokens that is lent out
+     * @notice Share of the supplied tokens that is lent out, as of the last update of the market
      * @param token The token address
      * @return Utilization scaled by `WAD` (1e18 = 100%); 0 when nothing is supplied
      */
     function getUtilization(address token) public view returns (uint256) {
-        Market storage market = markets[token];
-        if (market.totalSupply == 0) return 0;
-        return Math.mulDiv(market.totalBorrow, WAD, market.totalSupply);
+        return _utilization(markets[token]);
     }
 
     /**
@@ -531,12 +650,7 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
      * @return The borrow rate, annual and scaled by `WAD`
      */
     function getBorrowRate(address token) public view returns (uint256) {
-        uint256 utilization = getUtilization(token);
-        if (utilization <= OPTIMAL_UTILIZATION) {
-            return BASE_BORROW_RATE + Math.mulDiv(RATE_SLOPE_1, utilization, OPTIMAL_UTILIZATION);
-        }
-        return BASE_BORROW_RATE + RATE_SLOPE_1
-            + Math.mulDiv(RATE_SLOPE_2, utilization - OPTIMAL_UTILIZATION, WAD - OPTIMAL_UTILIZATION);
+        return _borrowRate(getUtilization(token));
     }
 
     /**
@@ -550,23 +664,23 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
     }
 
     /**
-     * @notice Get user's deposit for a specific token
+     * @notice Get user's deposit for a specific token, interest included
      * @param user The user address
      * @param token The token address
-     * @return The deposit amount
+     * @return The deposit amount as of the current block
      */
     function getUserDeposit(address user, address token) external view returns (uint256) {
-        return userDeposits[user][token];
+        return _userDeposit(user, token);
     }
 
     /**
-     * @notice Get user's borrow for a specific token
+     * @notice Get user's debt for a specific token, interest included
      * @param user The user address
      * @param token The token address
-     * @return The borrow amount
+     * @return The debt as of the current block
      */
     function getUserBorrow(address user, address token) external view returns (uint256) {
-        return userBorrows[user][token];
+        return _userBorrow(user, token);
     }
 
     /**
