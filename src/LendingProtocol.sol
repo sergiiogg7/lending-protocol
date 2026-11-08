@@ -71,6 +71,7 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
     IPriceOracle public immutable oracle;
 
     address[] public supportedTokens;
+    uint256 public constant MAX_MARKETS = 16; // the health checks loop over every market, so the loop is bounded
     uint256 public constant LIQUIDATION_BONUS = 500; // 5% extra collateral for the liquidator, in basis points
     uint256 public constant CLOSE_FACTOR = 5000; // 50%: share of a debt that one liquidation may repay
     uint256 public constant CLOSE_FACTOR_HF_THRESHOLD = 0.95e18; // below this health factor 100% can be repaid
@@ -119,6 +120,8 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
     error InvalidToken();
     /// @notice The token delivered less than the amount requested: fee-on-transfer tokens are not supported.
     error UnsupportedToken();
+    /// @notice The protocol already lists `MAX_MARKETS` markets.
+    error TooManyMarkets();
     /// @notice There is no proposed liquidation threshold decrease for the market.
     error NoPendingChange();
     /// @notice The delay of the proposed liquidation threshold decrease has not passed yet.
@@ -177,6 +180,7 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
         if (token == address(0)) revert ZeroAddress();
         _checkRiskParameters(ltv, liquidationThreshold);
         if (markets[token].isActive) revert MarketAlreadyExists();
+        if (supportedTokens.length >= MAX_MARKETS) revert TooManyMarkets();
         _validateToken(token);
 
         markets[token] = MarketState({
@@ -526,7 +530,7 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
      * @return The USD value, 8 decimals
      */
     function _valueInUsd(address token, uint256 amount, Math.Rounding rounding) internal view returns (uint256) {
-        // The position loops over the markets and values each asset: one oracle call per market, bounded by the market cap
+        // The position loops over the markets and values each asset: one oracle call per market, bounded by MAX_MARKETS
         // slither-disable-next-line calls-loop
         return Math.mulDiv(amount, oracle.getAssetPrice(token), 10 ** IERC20Metadata(token).decimals(), rounding);
     }

@@ -5,9 +5,9 @@ A minimal lending and borrowing protocol on Ethereum, built with Foundry and mod
 ![CI](https://github.com/sergiiogg7/lending-protocol/actions/workflows/test.yml/badge.svg)
 ![Solidity 0.8.24](https://img.shields.io/badge/Solidity-0.8.24-blue)
 ![Foundry](https://img.shields.io/badge/Built%20with-Foundry-orange)
-![Tests 149](https://img.shields.io/badge/tests-149%20passing-brightgreen)
+![Tests 153](https://img.shields.io/badge/tests-153%20passing-brightgreen)
 
-> **Not audited and not safe for real funds.** A few issues are still open (unbounded market loops) and are listed in [SECURITY.md](SECURITY.md).
+> **Not audited and not safe for real funds.** The remaining open points are limitations by design and are listed in [SECURITY.md](SECURITY.md).
 
 ## How it works
 
@@ -26,7 +26,7 @@ One contract, `LendingProtocol`, holds every market. Every token is valued in US
 
 ### Supported tokens
 
-A market can only be listed for a contract with `decimals()` up to 18 and a price in the oracle. Plain ERC-20s only: a token that delivers less than what is sent (fee on transfer) makes `deposit`, `repay` and `liquidate` revert, and rebasing tokens or tokens with transfer hooks or blacklists are not supported.
+The protocol lists at most 16 markets, which keeps the gas of the health checks bounded. A market can only be listed for a contract with `decimals()` up to 18 and a price in the oracle. Plain ERC-20s only: a token that delivers less than what is sent (fee on transfer) makes `deposit`, `repay` and `liquidate` revert, and rebasing tokens or tokens with transfer hooks or blacklists are not supported.
 
 ### Risk model
 
@@ -70,7 +70,7 @@ forge test -vvv
 forge coverage --no-match-coverage "script|test"
 ```
 
-149 tests: unit, fuzz and invariants (market totals match user balances, the contract holds the cash that backs supplied minus borrowed, indexes only grow), 100 % line coverage on `src/`. The risk model, liquidation, rates and interest each have their own suite and an end-to-end scenario with exact numbers. Dependencies: OpenZeppelin Contracts v5.4.0 and forge-std (git submodules).
+153 tests: unit, fuzz and invariants (market totals match user balances, the contract holds the cash that backs supplied minus borrowed, indexes only grow), 100 % line coverage on `src/`. The risk model, liquidation, rates and interest each have their own suite and an end-to-end scenario with exact numbers. Dependencies: OpenZeppelin Contracts v5.4.0 and forge-std (git submodules).
 
 ## Local deployment
 
