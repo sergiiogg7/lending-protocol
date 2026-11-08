@@ -7,6 +7,7 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {LendingProtocol} from "../src/LendingProtocol.sol";
 import {MockToken} from "./mocks/MockToken.sol";
+import {MockPriceOracle} from "./mocks/MockPriceOracle.sol";
 
 /// @dev Unit tests for flows not covered by `LendingProtocol.t.sol`: signed deposits, multi-step borrowing,
 ///      liquidation, pause behaviour and two-step ownership.
@@ -28,10 +29,13 @@ contract LendingProtocolFlowsTest is Test {
 
     function setUp() public {
         signer = vm.addr(signerKey);
+        MockPriceOracle oracle = new MockPriceOracle();
         vm.prank(owner);
-        lending = new LendingProtocol();
+        lending = new LendingProtocol(address(oracle));
         usdc = new MockToken("USD Coin", "USDC", 18, 0);
         weth = new MockToken("Wrapped Ether", "WETH", 18, 0);
+        oracle.setPrice(address(usdc), 1e8);
+        oracle.setPrice(address(weth), 1e8);
 
         vm.startPrank(owner);
         lending.addMarket(address(usdc), 8000, 500, 800);

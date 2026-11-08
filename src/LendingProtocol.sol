@@ -2,6 +2,8 @@
 pragma solidity 0.8.24;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import {IPriceOracle} from "./interfaces/IPriceOracle.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
@@ -52,6 +54,9 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
     mapping(address => mapping(address => uint256)) public userBorrows; // user => token => amount
     mapping(address => Market) public markets;
     mapping(address => uint256) public userNonces;
+
+    /// @notice Price source: USD per whole token, 8 decimals. Immutable on purpose.
+    IPriceOracle public immutable oracle;
 
     address[] public supportedTokens;
     uint256 public constant LIQUIDATION_THRESHOLD = 8000; // 80% in basis points
@@ -130,7 +135,11 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
     }
 
     /// @notice Deploys the protocol; the deployer becomes the owner.
-    constructor() Ownable(msg.sender) {}
+    /// @param oracle_ The price oracle used to value every token in USD
+    constructor(address oracle_) Ownable(msg.sender) {
+        if (oracle_ == address(0)) revert ZeroAddress();
+        oracle = IPriceOracle(oracle_);
+    }
 
     /**
      * @notice Add a new market to the protocol
@@ -366,11 +375,12 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
                 uint256 borrowAmount = userBorrows[user][token];
 
                 if (depositAmount > 0) {
-                    totalCollateralValue += (depositAmount * markets[token].collateralFactor) / BASIS_POINTS;
+                    totalCollateralValue += (_valueInUsd(token, depositAmount) * markets[token].collateralFactor)
+                        / BASIS_POINTS;
                 }
 
                 if (borrowAmount > 0) {
-                    totalBorrowValue += borrowAmount;
+                    totalBorrowValue += _valueInUsd(token, borrowAmount);
                 }
             }
         }
@@ -405,11 +415,12 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
                 }
 
                 if (depositAmount > 0) {
-                    newCollateralValue += (depositAmount * markets[supportedToken].collateralFactor) / BASIS_POINTS;
+                    newCollateralValue += (_valueInUsd(supportedToken, depositAmount)
+                            * markets[supportedToken].collateralFactor) / BASIS_POINTS;
                 }
 
                 if (borrowAmount > 0) {
-                    totalBorrowValue += borrowAmount;
+                    totalBorrowValue += _valueInUsd(supportedToken, borrowAmount);
                 }
             }
         }
@@ -444,11 +455,12 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
                 }
 
                 if (depositAmount > 0) {
-                    totalCollateralValue += (depositAmount * markets[supportedToken].collateralFactor) / BASIS_POINTS;
+                    totalCollateralValue += (_valueInUsd(supportedToken, depositAmount)
+                            * markets[supportedToken].collateralFactor) / BASIS_POINTS;
                 }
 
                 if (borrowAmount > 0) {
-                    totalBorrowValue += borrowAmount;
+                    totalBorrowValue += _valueInUsd(supportedToken, borrowAmount);
                 }
             }
         }
@@ -479,7 +491,8 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
         for (uint256 i = 0; i < supportedTokens.length; i++) {
             address token = supportedTokens[i];
             if (markets[token].isActive && userDeposits[user][token] > 0) {
-                uint256 value = (userDeposits[user][token] * markets[token].collateralFactor) / BASIS_POINTS;
+                uint256 value =
+                    (_valueInUsd(token, userDeposits[user][token]) * markets[token].collateralFactor) / BASIS_POINTS;
                 if (value > bestValue) {
                     bestValue = value;
                     bestToken = token;
@@ -488,6 +501,18 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
         }
 
         return bestToken;
+    }
+
+    /**
+     * @notice Value of `amount` base units of `token` in USD with 8 decimals
+     * @dev valueUsd = amount * price / 10^tokenDecimals. The result has 8 decimals whatever the token decimals are,
+     *      so values of different tokens can be added and compared.
+     * @param token The token address
+     * @param amount The amount in base units
+     * @return The USD value, 8 decimals
+     */
+    function _valueInUsd(address token, uint256 amount) internal view returns (uint256) {
+        return (amount * oracle.getAssetPrice(token)) / (10 ** IERC20Metadata(token).decimals());
     }
 
     /**

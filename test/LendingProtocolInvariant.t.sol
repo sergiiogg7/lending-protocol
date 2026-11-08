@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {StdInvariant} from "forge-std/StdInvariant.sol";
 import {LendingProtocol} from "../src/LendingProtocol.sol";
 import {MockToken} from "./mocks/MockToken.sol";
+import {MockPriceOracle} from "./mocks/MockPriceOracle.sol";
 
 /// @dev Drives the protocol with random user actions and keeps ghost sums of what it should hold.
 contract InvHandler is Test {
@@ -130,10 +131,13 @@ contract LendingProtocolInvariantTest is StdInvariant, Test {
 
     function setUp() public {
         address owner = makeAddr("owner");
+        MockPriceOracle oracle = new MockPriceOracle();
         vm.prank(owner);
-        lending = new LendingProtocol();
+        lending = new LendingProtocol(address(oracle));
         usdc = new MockToken("USD Coin", "USDC", 18, 0);
         weth = new MockToken("Wrapped Ether", "WETH", 18, 0);
+        oracle.setPrice(address(usdc), 1e8);
+        oracle.setPrice(address(weth), 1e8);
         vm.startPrank(owner);
         lending.addMarket(address(usdc), 8000, 500, 800);
         lending.addMarket(address(weth), 8000, 500, 800);

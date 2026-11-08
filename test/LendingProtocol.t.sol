@@ -4,6 +4,7 @@ pragma solidity 0.8.24;
 import {Test} from "forge-std/Test.sol";
 import {LendingProtocol} from "../src/LendingProtocol.sol";
 import {MockToken} from "./mocks/MockToken.sol";
+import {MockPriceOracle} from "./mocks/MockPriceOracle.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 
 contract LendingProtocolTest is Test {
@@ -11,6 +12,7 @@ contract LendingProtocolTest is Test {
     MockToken public usdc;
     MockToken public weth;
     MockToken public dai;
+    MockPriceOracle public oracle;
 
     address public owner;
     address public user1;
@@ -47,13 +49,17 @@ contract LendingProtocolTest is Test {
 
         // Deploy contracts
         vm.startPrank(owner);
-        lendingProtocol = new LendingProtocol();
+        oracle = new MockPriceOracle();
+        lendingProtocol = new LendingProtocol(address(oracle));
         vm.stopPrank();
 
         // Deploy mock tokens
         usdc = new MockToken("USD Coin", "USDC", 18, INITIAL_SUPPLY);
         weth = new MockToken("Wrapped Ether", "WETH", 18, INITIAL_SUPPLY);
         dai = new MockToken("Dai", "DAI", 18, INITIAL_SUPPLY);
+        oracle.setPrice(address(usdc), 1e8);
+        oracle.setPrice(address(weth), 1e8);
+        oracle.setPrice(address(dai), 1e8);
 
         // Add markets
         vm.startPrank(owner);

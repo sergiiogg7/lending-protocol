@@ -4,9 +4,10 @@ pragma solidity 0.8.24;
 import {Script, console} from "forge-std/Script.sol";
 import {LendingProtocol} from "../src/LendingProtocol.sol";
 import {MockToken} from "../test/mocks/MockToken.sol";
+import {MockPriceOracle} from "../test/mocks/MockPriceOracle.sol";
 
 /// @dev Local-only deploy for manual testing on Anvil (run it with Anvil's account #0 key).
-///      Deploys the protocol, two mock tokens (USDC, WETH, 18 decimals) with active markets, and gives each of
+///      Deploys a mock price oracle (every token at 1 USD), the protocol, two mock tokens (USDC, WETH, 18 decimals) with active markets, and gives each of
 ///      Anvil's accounts #1 to #3 some tokens.
 contract LocalDeploy is Script {
     uint256 constant TOKENS_PER_ACCOUNT = 100_000 ether;
@@ -20,9 +21,13 @@ contract LocalDeploy is Script {
         ];
 
         vm.startBroadcast();
-        LendingProtocol lending = new LendingProtocol();
+        MockPriceOracle oracle = new MockPriceOracle();
+        LendingProtocol lending = new LendingProtocol(address(oracle));
         MockToken usdc = new MockToken("USD Coin", "USDC", 18, 0);
         MockToken weth = new MockToken("Wrapped Ether", "WETH", 18, 0);
+
+        oracle.setPrice(address(usdc), 1e8);
+        oracle.setPrice(address(weth), 1e8);
 
         lending.addMarket(address(usdc), COLLATERAL_FACTOR, 500, 800);
         lending.addMarket(address(weth), COLLATERAL_FACTOR, 500, 800);
@@ -34,6 +39,7 @@ contract LocalDeploy is Script {
         vm.stopBroadcast();
 
         console.log("LendingProtocol:", address(lending));
+        console.log("Oracle:", address(oracle));
         console.log("USDC:", address(usdc));
         console.log("WETH:", address(weth));
     }

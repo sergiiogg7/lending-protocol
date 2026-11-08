@@ -11,7 +11,7 @@ Goal: understand lending and borrowing by building a simplified Aave V3-style co
 
 | Step | Fixes | What | Why it matters |
 |---|---|---|---|
-| 1 | #2 | `IPriceOracle` (USD, 8 decimals) with a mock oracle for tests and decimals normalization. Chainlink adapter later, for Sepolia. | Collateral and debt are only comparable in a common unit. Everything below depends on it. |
+| 1 | #2 (done 2026-11-08) | `IPriceOracle` (USD, 8 decimals) with a mock oracle for tests and decimals normalization. Chainlink adapter later, for Sepolia. | Collateral and debt are only comparable in a common unit. Everything below depends on it. |
 | 2 | #1, #3 | Per-market `ltv` and `liquidationThreshold` (threshold > LTV), health factor in USD, remove the "no debt, always allowed" shortcut. | The core risk model: borrow up to LTV, liquidated below the threshold. |
 | 3 | #6, #13 | Liquidation: close factor 50 %, per-market bonus, liquidator picks the collateral, price-based seizure, health factor must improve, liquidity check. | Most asked topic in interviews. |
 | 4 | #9 | Borrow against real available liquidity (`totalSupply - totalBorrow`). | Accounting correctness. |

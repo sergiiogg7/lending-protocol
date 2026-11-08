@@ -4,6 +4,7 @@ pragma solidity 0.8.24;
 import {Test} from "forge-std/Test.sol";
 import {LendingProtocol} from "../src/LendingProtocol.sol";
 import {MockToken} from "./mocks/MockToken.sol";
+import {MockPriceOracle} from "./mocks/MockPriceOracle.sol";
 
 /// @dev Fuzz tests of the accounting and of the health checks.
 contract LendingProtocolFuzzTest is Test {
@@ -18,10 +19,13 @@ contract LendingProtocolFuzzTest is Test {
     uint256 internal constant MAX = 1_000_000 ether;
 
     function setUp() public {
+        MockPriceOracle oracle = new MockPriceOracle();
         vm.prank(owner);
-        lending = new LendingProtocol();
+        lending = new LendingProtocol(address(oracle));
         usdc = new MockToken("USD Coin", "USDC", 18, 0);
         weth = new MockToken("Wrapped Ether", "WETH", 18, 0);
+        oracle.setPrice(address(usdc), 1e8);
+        oracle.setPrice(address(weth), 1e8);
         vm.startPrank(owner);
         lending.addMarket(address(usdc), 8000, 500, 800);
         lending.addMarket(address(weth), 8000, 500, 800);
@@ -74,8 +78,9 @@ contract LendingProtocolFuzzTest is Test {
         vm.startPrank(user);
         lending.deposit(address(usdc), collateral);
         // Known issue (see SECURITY.md): the very first borrow of a user skips the collateral check,
-        // so the property is only checked from the second borrow on.
-        lending.borrow(address(weth), 1);
+        // so the property is only checked from the second borrow on. The first borrow must be worth at least
+        // 1 USD unit: dust (e.g. 1 wei) is valued at 0 after rounding, which would keep the shortcut active.
+        lending.borrow(address(weth), 1 ether);
         try lending.borrow(address(weth), borrowAmount) {
             assertFalse(lending.isLiquidatable(user));
         } catch {}

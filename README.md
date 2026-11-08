@@ -7,7 +7,7 @@ A minimal lending and borrowing protocol on Ethereum, built with Foundry. Users 
 ![Foundry](https://img.shields.io/badge/Built%20with-Foundry-orange)
 ![Tests 72](https://img.shields.io/badge/tests-72%20passing-brightgreen)
 
-> **Not audited and not safe for real funds.** The logic has known vulnerabilities (no price oracle, an unchecked first borrow, no interest accrual and more) that are listed in [SECURITY.md](SECURITY.md) and will be fixed in a later phase.
+> **Not audited and not safe for real funds.** The logic has known vulnerabilities (an unchecked first borrow, mixed-up collateral factor and liquidation threshold, no interest accrual and more) that are listed in [SECURITY.md](SECURITY.md) and will be fixed in a later phase.
 
 ## How it works
 
