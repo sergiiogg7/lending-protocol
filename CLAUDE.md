@@ -36,6 +36,7 @@ One contract in `src/`: `LendingProtocol` (`ReentrancyGuard`, `Pausable`, `Ownab
 | `LendingProtocolFuzz.t.sol` | Fuzz tests |
 | `LendingProtocolInvariant.t.sol` | Invariant tests with a handler that also skips time and changes risk parameters |
 | `LendingProtocolRisk.t.sol` | Risk model: `ltv`, `liquidationThreshold`, health factor, withdrawals, end-to-end scenario |
+| `LendingProtocolTokens.t.sol` | Which tokens can be listed; fee-on-transfer tokens are rejected (`mocks/MockFeeToken.sol`) |
 | `LendingProtocolGovernance.t.sol` | Owner powers: instant LTV, instant threshold increase, two-day delay to lower the threshold |
 | `LendingProtocolRecover.t.sol` | `emergencyRecover` only takes the surplus; deposits are untouchable; fuzz on exits |
 | `LendingProtocolInterest.t.sol` | Interest accrual with indexes: one year, several borrowers, compounding, repay and withdraw everything, solvency fuzz |

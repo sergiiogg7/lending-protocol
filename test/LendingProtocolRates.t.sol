@@ -66,6 +66,7 @@ contract LendingProtocolRatesTest is Test {
 
     function test_AMarketWithoutDepositsHasNoUtilizationNorRates() public {
         MockToken dai = new MockToken("Dai", "DAI", 18, 0);
+        oracle.setPrice(address(dai), 1e8);
         vm.prank(owner);
         lending.addMarket(address(dai), 7500, 8000);
 

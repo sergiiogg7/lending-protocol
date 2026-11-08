@@ -115,6 +115,10 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
     error InsufficientCollateral();
     /// @notice The amount to recover is more than the contract holds beyond what it owes to depositors.
     error AmountExceedsSurplus();
+    /// @notice The address is not an ERC20 that the protocol can list (not a contract, no `decimals()`, or more than 18).
+    error InvalidToken();
+    /// @notice The token delivered less than the amount requested: fee-on-transfer tokens are not supported.
+    error UnsupportedToken();
     /// @notice There is no proposed liquidation threshold decrease for the market.
     error NoPendingChange();
     /// @notice The delay of the proposed liquidation threshold decrease has not passed yet.
@@ -173,6 +177,7 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
         if (token == address(0)) revert ZeroAddress();
         _checkRiskParameters(ltv, liquidationThreshold);
         if (markets[token].isActive) revert MarketAlreadyExists();
+        _validateToken(token);
 
         markets[token] = MarketState({
             token: IERC20(token),
@@ -345,7 +350,7 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
         _burnDebt(msg.sender, token, amount);
 
         // Interaction last (Checks-Effects-Interactions)
-        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
+        _pull(token, amount);
 
         emit Repay(msg.sender, token, amount);
     }
@@ -394,7 +399,7 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
         _burnDeposit(user, collateralToken, collateralSeized);
 
         // Interactions last: take the debt tokens from the liquidator, then pay the seized collateral
-        IERC20(debtToken).safeTransferFrom(msg.sender, address(this), debtToCover);
+        _pull(debtToken, debtToCover);
         IERC20(collateralToken).safeTransfer(msg.sender, collateralSeized);
 
         emit Liquidate(msg.sender, user, collateralToken, debtToken, debtToCover, collateralSeized);
@@ -526,6 +531,28 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
         return Math.mulDiv(amount, oracle.getAssetPrice(token), 10 ** IERC20Metadata(token).decimals(), rounding);
     }
 
+    /// @dev Pulls `amount` of `token` from the caller and checks that exactly that amount arrived. Tokens that charge a
+    ///      fee on transfer would leave the protocol owing more than it holds, so they are rejected here.
+    function _pull(address token, uint256 amount) internal {
+        uint256 balanceBefore = IERC20(token).balanceOf(address(this));
+        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
+        // slither-disable-next-line incorrect-equality
+        if (IERC20(token).balanceOf(address(this)) - balanceBefore != amount) revert UnsupportedToken();
+    }
+
+    /// @dev A listable token is a contract with `decimals()` up to 18 and a price in the oracle. A market whose price
+    ///      is missing would make every position holding it impossible to value.
+    function _validateToken(address token) internal view {
+        if (token.code.length == 0) revert InvalidToken();
+        try IERC20Metadata(token).decimals() returns (uint8 tokenDecimals) {
+            if (tokenDecimals > 18) revert InvalidToken();
+        } catch {
+            revert InvalidToken();
+        }
+        // slither-disable-next-line incorrect-equality
+        if (oracle.getAssetPrice(token) == 0) revert InvalidToken();
+    }
+
     /// @dev Credits `amount` to the caller, as scaled shares, and pulls the tokens.
     function _deposit(address token, uint256 amount) internal {
         if (amount == 0) revert ZeroAmount();
@@ -539,7 +566,7 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
         markets[token].scaledSupply += scaled;
 
         // Interaction last (Checks-Effects-Interactions)
-        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
+        _pull(token, amount);
 
         emit Deposit(msg.sender, token, amount);
     }

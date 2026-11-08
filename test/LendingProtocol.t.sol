@@ -105,6 +105,7 @@ contract LendingProtocolTest is Test {
 
     function test_AddMarket() public {
         MockToken newToken = new MockToken("New Token", "NEW", 18, INITIAL_SUPPLY);
+        oracle.setPrice(address(newToken), 1e8); // a market can only be listed if the oracle has a price for it
 
         vm.startPrank(owner);
         vm.expectEmit(true, false, false, true);
