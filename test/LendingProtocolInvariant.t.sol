@@ -106,11 +106,14 @@ contract InvHandler is Test {
         if (max == 0 || liq == victim) return;
         amount = bound(amount, 1, max);
 
+        MockToken collateral = t == usdc ? weth : usdc;
+        uint256 borrowBefore = lending.getMarket(address(t)).totalBorrow;
         uint256 depUsdcBefore = lending.getMarket(address(usdc)).totalSupply;
         uint256 depWethBefore = lending.getMarket(address(weth)).totalSupply;
         vm.prank(liq);
-        try lending.liquidate(victim, address(t), amount) {
-            _addBorrow(t, amount, false);
+        try lending.liquidate(address(collateral), address(t), victim, amount) {
+            // the close factor may cap the amount, so read what was really repaid
+            _addBorrow(t, borrowBefore - lending.getMarket(address(t)).totalBorrow, false);
             ghostDepositsUsdc -= depUsdcBefore - lending.getMarket(address(usdc)).totalSupply;
             ghostDepositsWeth -= depWethBefore - lending.getMarket(address(weth)).totalSupply;
         } catch {}

@@ -37,7 +37,14 @@ contract LendingProtocolTest is Test {
     event Withdraw(address indexed user, address indexed token, uint256 amount);
     event Borrow(address indexed user, address indexed token, uint256 amount);
     event Repay(address indexed user, address indexed token, uint256 amount);
-    event Liquidate(address indexed liquidator, address indexed user, address indexed token, uint256 amount);
+    event Liquidate(
+        address indexed liquidator,
+        address indexed user,
+        address indexed collateralToken,
+        address debtToken,
+        uint256 debtCovered,
+        uint256 collateralSeized
+    );
     event RatesUpdated(address indexed token, uint256 supplyRate, uint256 borrowRate);
 
     function setUp() public {
@@ -462,15 +469,16 @@ contract LendingProtocolTest is Test {
 
     function test_RevertWhen_LiquidateZeroAmount() public {
         vm.expectRevert(LendingProtocol.ZeroAmount.selector);
-        lendingProtocol.liquidate(user1, address(dai), 0);
+        lendingProtocol.liquidate(address(usdc), address(dai), user1, 0);
     }
 
-    function test_RevertWhen_LiquidateInsufficientBorrow() public {
+    function test_RevertWhen_LiquidateUserWithoutPosition() public {
         vm.startPrank(liquidator);
         dai.approve(address(lendingProtocol), BORROW_AMOUNT);
 
-        vm.expectRevert(LendingProtocol.InsufficientBorrowToLiquidate.selector);
-        lendingProtocol.liquidate(user1, address(dai), BORROW_AMOUNT);
+        // a user without debt has the maximum health factor, so it cannot be liquidated
+        vm.expectRevert(LendingProtocol.NotLiquidatable.selector);
+        lendingProtocol.liquidate(address(usdc), address(dai), user1, BORROW_AMOUNT);
 
         vm.stopPrank();
     }
@@ -487,7 +495,7 @@ contract LendingProtocolTest is Test {
         dai.approve(address(lendingProtocol), BORROW_AMOUNT / 2);
 
         vm.expectRevert(LendingProtocol.NotLiquidatable.selector);
-        lendingProtocol.liquidate(user1, address(dai), BORROW_AMOUNT / 2);
+        lendingProtocol.liquidate(address(usdc), address(dai), user1, BORROW_AMOUNT / 2);
 
         vm.stopPrank();
     }
@@ -687,8 +695,8 @@ contract LendingProtocolTest is Test {
         assertEq(market.totalBorrow, DEPOSIT_AMOUNT / 2);
     }
 
-    function test_FindBestCollateral() public {
-        // Test the internal findBestCollateral function through liquidation
+    function test_LiquidatorChoosesTheCollateral() public {
+        // The liquidator picks which of the user deposits to seize
 
         // User1 deposits multiple tokens
         vm.startPrank(user1);
@@ -705,14 +713,15 @@ contract LendingProtocolTest is Test {
         lendingProtocol.updateMarket(address(weth), 3000, 3000, SUPPLY_RATE, BORROW_RATE);
         vm.stopPrank();
 
-        // Liquidate - this will call findBestCollateral internally
+        // Liquidate, seizing USDC
         vm.startPrank(liquidator);
         dai.approve(address(lendingProtocol), BORROW_AMOUNT);
-        lendingProtocol.liquidate(user1, address(dai), BORROW_AMOUNT);
+        lendingProtocol.liquidate(address(usdc), address(dai), user1, BORROW_AMOUNT);
         vm.stopPrank();
 
-        // Verify liquidation occurred
-        assertLt(lendingProtocol.getUserDeposit(user1, address(usdc)), DEPOSIT_AMOUNT);
+        // Only the chosen collateral was seized: 50 DAI repaid * 1.05
+        assertEq(lendingProtocol.getUserDeposit(user1, address(usdc)), DEPOSIT_AMOUNT - (BORROW_AMOUNT * 105) / 100);
+        assertEq(lendingProtocol.getUserDeposit(user1, address(weth)), DEPOSIT_AMOUNT);
     }
 
     function test_ZeroAmountOperations() public {
@@ -738,7 +747,7 @@ contract LendingProtocolTest is Test {
         lendingProtocol.repay(address(dai), 0);
 
         vm.expectRevert(LendingProtocol.ZeroAmount.selector);
-        lendingProtocol.liquidate(user1, address(dai), 0);
+        lendingProtocol.liquidate(address(usdc), address(dai), user1, 0);
 
         vm.stopPrank();
     }

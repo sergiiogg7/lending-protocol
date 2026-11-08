@@ -130,15 +130,19 @@ contract LendingProtocolFlowsTest is Test {
         assertEq(usdc.balanceOf(signer), 1000 ether);
     }
 
-    function test_RepayEverythingDeactivatesUser() public {
+    function test_UserIsActiveWhileItHoldsDepositsOrDebt() public {
         vm.startPrank(signer);
         lending.deposit(address(usdc), AMOUNT);
         lending.borrow(address(weth), 10 ether);
         lending.repay(address(weth), 10 ether);
-        vm.stopPrank();
 
         assertEq(lending.getUserBorrow(signer, address(weth)), 0);
-        assertFalse(lending.getUser(signer).isActive);
+        assertTrue(lending.getUser(signer).isActive); // the deposit is still there
+
+        lending.withdraw(address(usdc), AMOUNT);
+        vm.stopPrank();
+
+        assertFalse(lending.getUser(signer).isActive); // no deposits and no debt
     }
 
     function test_Liquidate() public {
@@ -152,26 +156,26 @@ contract LendingProtocolFlowsTest is Test {
         assertTrue(lending.isLiquidatable(signer));
 
         vm.prank(liquidator);
-        lending.liquidate(signer, address(weth), 10 ether);
+        lending.liquidate(address(usdc), address(weth), signer, 10 ether);
 
         assertEq(lending.getUserBorrow(signer, address(weth)), 40 ether);
         assertEq(lending.getUserDeposit(signer, address(usdc)), AMOUNT - 10.5 ether);
         assertEq(usdc.balanceOf(liquidator), 1000 ether + 10.5 ether);
     }
 
-    function test_RevertWhen_LiquidateWithoutCollateral() public {
+    function test_RevertWhen_LiquidateCollateralTokenNotDeposited() public {
         vm.startPrank(signer);
         lending.deposit(address(usdc), AMOUNT);
         lending.borrow(address(weth), 50 ether);
         vm.stopPrank();
 
-        // threshold 0 -> the deposit has no value, so findBestCollateral returns address(0)
+        // threshold 0 makes the position liquidatable; the signer holds no WETH to seize
         vm.prank(owner);
         lending.updateMarket(address(usdc), 0, 0, 500, 800);
 
         vm.prank(liquidator);
-        vm.expectRevert(LendingProtocol.NoCollateralToSeize.selector);
-        lending.liquidate(signer, address(weth), 1 ether);
+        vm.expectRevert(LendingProtocol.InsufficientCollateral.selector);
+        lending.liquidate(address(weth), address(weth), signer, 1 ether);
     }
 
     function test_RevertWhen_LiquidateInsufficientCollateral() public {
@@ -186,10 +190,10 @@ contract LendingProtocolFlowsTest is Test {
         lending.updateMarket(address(weth), 5000, 5000, 500, 800);
         vm.stopPrank();
 
-        // best collateral is usdc (first of two equal values) and holds 100, but 100 * 105% = 105 must be seized
+        // repaying 100 requires seizing 100 * 105% = 105 USDC, but the signer only holds 100
         vm.prank(liquidator);
         vm.expectRevert(LendingProtocol.InsufficientCollateral.selector);
-        lending.liquidate(signer, address(weth), AMOUNT);
+        lending.liquidate(address(usdc), address(weth), signer, AMOUNT);
     }
 
     function test_CanBorrowAndCanWithdrawViews() public {

@@ -22,7 +22,7 @@ Deploy: `script/Deploy.s.sol` reads `PRIVATE_KEY`, `ORACLE` (price oracle addres
 
 ## Architecture
 
-One contract in `src/`: `LendingProtocol` (`ReentrancyGuard`, `Pausable`, `Ownable2Step`). The owner adds markets (`addMarket`, `updateMarket`); users `deposit`, `withdraw`, `borrow`, `repay`, `depositWithSignature` and anyone can `liquidate` an unhealthy position. State: `markets[token]`, `userDeposits[user][token]`, `userBorrows[user][token]`, `users[user]`, `userNonces`, `supportedTokens`. Every token is valued in USD (8 decimals) through the immutable `oracle`. Each market has an `ltv` and a `liquidationThreshold`; `_position` aggregates a user in USD (collateral rounded down, debt rounded up) and `getHealthFactor` (1e18 = 1), `canBorrow` (LTV), `canWithdraw` (health factor >= 1) and `isLiquidatable` (health factor < 1) loop over `supportedTokens`. `withdraw` and `repay` are not pausable on purpose. Errors are custom errors, never `require` strings.
+One contract in `src/`: `LendingProtocol` (`ReentrancyGuard`, `Pausable`, `Ownable2Step`). The owner adds markets (`addMarket`, `updateMarket`); users `deposit`, `withdraw`, `borrow`, `repay`, `depositWithSignature` and anyone can `liquidate(collateralToken, debtToken, user, debtToCover)` a position with a health factor below 1 (close factor 50 %, or 100 % below 0.95; 5 % bonus in the collateral chosen by the liquidator). State: `markets[token]`, `userDeposits[user][token]`, `userBorrows[user][token]`, `users[user]`, `userNonces`, `supportedTokens`. Every token is valued in USD (8 decimals) through the immutable `oracle`. Each market has an `ltv` and a `liquidationThreshold`; `_position` aggregates a user in USD (collateral rounded down, debt rounded up) and `getHealthFactor` (1e18 = 1), `canBorrow` (LTV), `canWithdraw` (health factor >= 1) and `isLiquidatable` (health factor < 1) loop over `supportedTokens`. `withdraw` and `repay` are not pausable on purpose. Errors are custom errors, never `require` strings.
 
 **Known logic bugs are listed in `SECURITY.md`; the ones not marked as fixed are deliberately still open.** Do not "fix" them while doing unrelated work: phase 2 fixes them one by one, test first, following the roadmap in `PLAN.md`.
 
@@ -35,6 +35,7 @@ One contract in `src/`: `LendingProtocol` (`ReentrancyGuard`, `Pausable`, `Ownab
 | `LendingProtocolFuzz.t.sol` | Fuzz tests |
 | `LendingProtocolInvariant.t.sol` | Invariant tests with a handler and ghost variables |
 | `LendingProtocolRisk.t.sol` | Risk model: `ltv`, `liquidationThreshold`, health factor, withdrawals, end-to-end scenario |
+| `LendingProtocolLiquidation.t.sol` | Liquidation: close factor, bonus, liquidity, bad debt, `isActive`, fuzz on the health factor |
 | `LendingProtocolOracle.t.sol` | How the protocol uses the oracle |
 | `mocks/MockPriceOracle.sol` | Settable USD price source (tests and `LocalDeploy` only) |
 | `mocks/MockToken.sol` | Mintable ERC20 with configurable decimals (also used by `LocalDeploy`) |

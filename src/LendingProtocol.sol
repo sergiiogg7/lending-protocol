@@ -68,7 +68,9 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
     IPriceOracle public immutable oracle;
 
     address[] public supportedTokens;
-    uint256 public constant LIQUIDATION_PENALTY = 500; // 5% in basis points
+    uint256 public constant LIQUIDATION_BONUS = 500; // 5% extra collateral for the liquidator, in basis points
+    uint256 public constant CLOSE_FACTOR = 5000; // 50%: share of a debt that one liquidation may repay
+    uint256 public constant CLOSE_FACTOR_HF_THRESHOLD = 0.95e18; // below this health factor 100% can be repaid
     uint256 public constant BASIS_POINTS = 10000;
     uint256 public constant WAD = 1e18; // scale of the health factor: 1e18 means a health factor of 1
 
@@ -77,7 +79,7 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
     error ZeroAddress();
     /// @notice An amount argument is zero.
     error ZeroAmount();
-    /// @notice `ltv` is above `liquidationThreshold`, or `liquidationThreshold` is above `BASIS_POINTS`.
+    /// @notice `ltv` is above `liquidationThreshold`, or `liquidationThreshold` with the liquidation bonus exceeds 100 %.
     error InvalidRiskParameters();
     /// @notice A market already exists for the token.
     error MarketAlreadyExists();
@@ -99,13 +101,11 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
     error InvalidNonce();
     /// @notice The recovered signer is not the caller.
     error InvalidSignature();
-    /// @notice The user owes less than the amount to liquidate.
-    error InsufficientBorrowToLiquidate();
+    /// @notice The user has no debt in the token to liquidate.
+    error NoDebtToLiquidate();
     /// @notice The health factor of the position is not below 1.
     error NotLiquidatable();
-    /// @notice The user has no collateral to seize.
-    error NoCollateralToSeize();
-    /// @notice The best collateral does not cover the amount to seize.
+    /// @notice The user does not hold enough of the chosen collateral to pay the liquidation bonus.
     error InsufficientCollateral();
 
     // Events
@@ -121,8 +121,15 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
     event Borrow(address indexed user, address indexed token, uint256 amount);
     /// @notice Emitted when `user` repays `amount` of `token`.
     event Repay(address indexed user, address indexed token, uint256 amount);
-    /// @notice Emitted when `liquidator` repays `amount` of `token` debt of `user`.
-    event Liquidate(address indexed liquidator, address indexed user, address indexed token, uint256 amount);
+    /// @notice Emitted when `liquidator` repays `debtCovered` of `debtToken` for `user` and seizes `collateralSeized`.
+    event Liquidate(
+        address indexed liquidator,
+        address indexed user,
+        address indexed collateralToken,
+        address debtToken,
+        uint256 debtCovered,
+        uint256 collateralSeized
+    );
     /// @notice Emitted when a market supply and borrow rates change.
     event RatesUpdated(address indexed token, uint256 supplyRate, uint256 borrowRate);
     /// @notice Emitted when the owner recovers tokens.
@@ -245,9 +252,7 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
         users[msg.sender].totalDeposited -= amount;
         users[msg.sender].lastUpdateTime = block.timestamp;
 
-        if (users[msg.sender].totalDeposited == 0) {
-            users[msg.sender].isActive = false;
-        }
+        _refreshActive(msg.sender);
 
         markets[token].totalSupply -= amount;
 
@@ -291,9 +296,7 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
         users[msg.sender].totalBorrowed -= amount;
         users[msg.sender].lastUpdateTime = block.timestamp;
 
-        if (users[msg.sender].totalBorrowed == 0) {
-            users[msg.sender].isActive = false;
-        }
+        _refreshActive(msg.sender);
 
         markets[token].totalBorrow -= amount;
 
@@ -338,43 +341,62 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
     }
 
     /**
-     * @notice Liquidate an undercollateralized position
+     * @notice Liquidate an unhealthy position: repay part of its debt and receive its collateral plus a bonus
+     * @dev Requires a health factor below 1. At most `CLOSE_FACTOR` (50 %) of the user's debt in `debtToken` can be
+     *      repaid, or all of it when the health factor is below `CLOSE_FACTOR_HF_THRESHOLD`; a larger `debtToCover`
+     *      is capped. The collateral received is worth the repaid debt plus `LIQUIDATION_BONUS`, valued by the oracle.
+     * @param collateralToken The collateral the liquidator chooses to receive
+     * @param debtToken The debt token to repay
      * @param user The user to liquidate
-     * @param token The token to liquidate
-     * @param amount The amount to liquidate
+     * @param debtToCover The amount of debt to repay, in `debtToken` units
      */
-    function liquidate(address user, address token, uint256 amount)
+    function liquidate(address collateralToken, address debtToken, address user, uint256 debtToCover)
         external
         nonReentrant
         whenNotPaused
-        onlyActiveMarket(token)
+        onlyActiveMarket(collateralToken)
+        onlyActiveMarket(debtToken)
     {
-        if (amount == 0) revert ZeroAmount();
-        if (userBorrows[user][token] < amount) revert InsufficientBorrowToLiquidate();
-        if (!isLiquidatable(user)) revert NotLiquidatable();
+        if (debtToCover == 0) revert ZeroAmount();
 
-        uint256 collateralToSeize = (amount * (BASIS_POINTS + LIQUIDATION_PENALTY)) / BASIS_POINTS;
+        uint256 healthFactor = getHealthFactor(user);
+        if (healthFactor >= WAD) revert NotLiquidatable();
 
-        // Find collateral token to seize
-        address collateralToken = findBestCollateral(user);
-        if (collateralToken == address(0)) revert NoCollateralToSeize();
-        if (userDeposits[user][collateralToken] < collateralToSeize) revert InsufficientCollateral();
+        uint256 userDebt = userBorrows[user][debtToken];
+        if (userDebt == 0) revert NoDebtToLiquidate();
 
-        // Update user's borrow
-        userBorrows[user][token] -= amount;
-        users[user].totalBorrowed -= amount;
-        markets[token].totalBorrow -= amount;
+        // Close factor: half of the debt (rounded up, so tiny debts can be cleared), or all of it when deep underwater
+        uint256 maxDebtToCover = healthFactor < CLOSE_FACTOR_HF_THRESHOLD
+            ? userDebt
+            : Math.mulDiv(userDebt, CLOSE_FACTOR, BASIS_POINTS, Math.Rounding.Ceil);
+        if (debtToCover > maxDebtToCover) debtToCover = maxDebtToCover;
 
-        // Seize collateral
-        userDeposits[user][collateralToken] -= collateralToSeize;
-        users[user].totalDeposited -= collateralToSeize;
-        markets[collateralToken].totalSupply -= collateralToSeize;
+        uint256 collateralSeized = _collateralToSeize(collateralToken, debtToken, debtToCover);
+        if (userDeposits[user][collateralToken] < collateralSeized) revert InsufficientCollateral();
+
+        // The contract must hold the collateral that is not lent out
+        Market storage collateralMarket = markets[collateralToken];
+        if (collateralMarket.totalSupply - collateralMarket.totalBorrow < collateralSeized) {
+            revert InsufficientLiquidity();
+        }
+
+        // Repay the user's debt
+        userBorrows[user][debtToken] -= debtToCover;
+        users[user].totalBorrowed -= debtToCover;
+        markets[debtToken].totalBorrow -= debtToCover;
+
+        // Seize the collateral
+        userDeposits[user][collateralToken] -= collateralSeized;
+        users[user].totalDeposited -= collateralSeized;
+        collateralMarket.totalSupply -= collateralSeized;
+
+        _refreshActive(user);
 
         // Interactions last: take the debt tokens from the liquidator, then pay the seized collateral
-        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
-        IERC20(collateralToken).safeTransfer(msg.sender, collateralToSeize);
+        IERC20(debtToken).safeTransferFrom(msg.sender, address(this), debtToCover);
+        IERC20(collateralToken).safeTransfer(msg.sender, collateralSeized);
 
-        emit Liquidate(msg.sender, user, token, amount);
+        emit Liquidate(msg.sender, user, collateralToken, debtToken, debtToCover, collateralSeized);
     }
 
     /**
@@ -427,28 +449,30 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
     }
 
     /**
-     * @notice Find the best collateral token for liquidation
-     * @param user The user address
-     * @return The address of the best collateral token
+     * @notice Collateral a liquidator receives for repaying `debtToCover`: the debt plus the bonus, priced in USD
+     * @dev collateral = debtToCover * (1 + bonus) * debtPrice / collateralPrice, adjusted for both token decimals.
+     *      Rounded down, in favour of the borrower.
+     * @param collateralToken The collateral token
+     * @param debtToken The debt token
+     * @param debtToCover The amount of debt repaid
+     * @return The amount of `collateralToken` to seize
      */
-    function findBestCollateral(address user) internal view returns (address) {
-        address bestToken = address(0);
-        uint256 bestValue = 0;
+    function _collateralToSeize(address collateralToken, address debtToken, uint256 debtToCover)
+        internal
+        view
+        returns (uint256)
+    {
+        uint256 debtWithBonus = Math.mulDiv(debtToCover, BASIS_POINTS + LIQUIDATION_BONUS, BASIS_POINTS);
+        uint256 valueUsd = _valueInUsd(debtToken, debtWithBonus, Math.Rounding.Floor);
+        return
+            Math.mulDiv(
+                valueUsd, 10 ** IERC20Metadata(collateralToken).decimals(), oracle.getAssetPrice(collateralToken)
+            );
+    }
 
-        for (uint256 i = 0; i < supportedTokens.length; i++) {
-            address token = supportedTokens[i];
-            if (markets[token].isActive && userDeposits[user][token] > 0) {
-                uint256 value =
-                    (_valueInUsd(token, userDeposits[user][token], Math.Rounding.Floor)
-                            * markets[token].liquidationThreshold) / BASIS_POINTS;
-                if (value > bestValue) {
-                    bestValue = value;
-                    bestToken = token;
-                }
-            }
-        }
-
-        return bestToken;
+    /// @dev A user is active while holding any deposit or any debt.
+    function _refreshActive(address user) internal {
+        users[user].isActive = users[user].totalDeposited > 0 || users[user].totalBorrowed > 0;
     }
 
     /**
@@ -503,9 +527,13 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
         return Math.mulDiv(amount, oracle.getAssetPrice(token), 10 ** IERC20Metadata(token).decimals(), rounding);
     }
 
-    /// @dev Reverts unless `ltv <= liquidationThreshold <= BASIS_POINTS`.
+    /// @dev Reverts unless `ltv <= liquidationThreshold` and `liquidationThreshold * (1 + bonus) <= 100 %`, so that
+    ///      the collateral handed out by a liquidation never exceeds the value of the collateral backing the debt.
     function _checkRiskParameters(uint256 ltv, uint256 liquidationThreshold) internal pure {
-        if (ltv > liquidationThreshold || liquidationThreshold > BASIS_POINTS) revert InvalidRiskParameters();
+        // Compare with the highest allowed threshold (9523 = 10000 * 10000 / 10500) instead of multiplying,
+        // so that huge inputs revert with the custom error and do not overflow.
+        uint256 maxThreshold = (BASIS_POINTS * BASIS_POINTS) / (BASIS_POINTS + LIQUIDATION_BONUS);
+        if (ltv > liquidationThreshold || liquidationThreshold > maxThreshold) revert InvalidRiskParameters();
     }
 
     /**
