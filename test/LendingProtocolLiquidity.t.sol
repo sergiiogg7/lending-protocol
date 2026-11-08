@@ -27,8 +27,8 @@ contract LendingProtocolLiquidityTest is Test {
 
         vm.startPrank(owner);
         lending = new LendingProtocol(address(oracle));
-        lending.addMarket(address(usdc), 8000, 8500, 0, 0);
-        lending.addMarket(address(weth), 7500, 8000, 0, 0);
+        lending.addMarket(address(usdc), 8000, 8500);
+        lending.addMarket(address(weth), 7500, 8000);
         vm.stopPrank();
 
         // The market has 1000 USDC; Alice borrows 800 of them, so 200 are left

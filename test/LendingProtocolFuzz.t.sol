@@ -27,8 +27,8 @@ contract LendingProtocolFuzzTest is Test {
         oracle.setPrice(address(usdc), 1e8);
         oracle.setPrice(address(weth), 1e8);
         vm.startPrank(owner);
-        lending.addMarket(address(usdc), 7500, 8000, 500, 800);
-        lending.addMarket(address(weth), 7500, 8000, 500, 800);
+        lending.addMarket(address(usdc), 7500, 8000);
+        lending.addMarket(address(weth), 7500, 8000);
         vm.stopPrank();
 
         address[2] memory actors = [lp, user];
@@ -103,7 +103,7 @@ contract LendingProtocolFuzzTest is Test {
         MockToken token = new MockToken("T", "T", 18, 0);
         vm.prank(owner);
         vm.expectRevert(LendingProtocol.InvalidRiskParameters.selector);
-        lending.addMarket(address(token), 0, factor, 0, 0);
+        lending.addMarket(address(token), 0, factor);
     }
 
     function testFuzz_RevertWhen_WithdrawMoreThanDeposited(uint256 deposited, uint256 extra) public {

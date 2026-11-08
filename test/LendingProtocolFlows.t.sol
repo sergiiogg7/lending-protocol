@@ -38,8 +38,8 @@ contract LendingProtocolFlowsTest is Test {
         oracle.setPrice(address(weth), 1e8);
 
         vm.startPrank(owner);
-        lending.addMarket(address(usdc), 7500, 8000, 500, 800);
-        lending.addMarket(address(weth), 7500, 8000, 500, 800);
+        lending.addMarket(address(usdc), 7500, 8000);
+        lending.addMarket(address(weth), 7500, 8000);
         vm.stopPrank();
 
         address[3] memory actors = [signer, lp, liquidator];
@@ -152,7 +152,7 @@ contract LendingProtocolFlowsTest is Test {
         vm.stopPrank();
 
         vm.prank(owner);
-        lending.updateMarket(address(usdc), 3000, 3000, 500, 800); // collateral counted 30 < debt 50
+        lending.updateMarket(address(usdc), 3000, 3000); // collateral counted 30 < debt 50
         assertTrue(lending.isLiquidatable(signer));
 
         vm.prank(liquidator);
@@ -171,7 +171,7 @@ contract LendingProtocolFlowsTest is Test {
 
         // threshold 0 makes the position liquidatable; the signer holds no WETH to seize
         vm.prank(owner);
-        lending.updateMarket(address(usdc), 0, 0, 500, 800);
+        lending.updateMarket(address(usdc), 0, 0);
 
         vm.prank(liquidator);
         vm.expectRevert(LendingProtocol.InsufficientCollateral.selector);
@@ -186,8 +186,8 @@ contract LendingProtocolFlowsTest is Test {
         vm.stopPrank();
 
         vm.startPrank(owner);
-        lending.updateMarket(address(usdc), 5000, 5000, 500, 800);
-        lending.updateMarket(address(weth), 5000, 5000, 500, 800);
+        lending.updateMarket(address(usdc), 5000, 5000);
+        lending.updateMarket(address(weth), 5000, 5000);
         vm.stopPrank();
 
         // repaying 100 requires seizing 100 * 105% = 105 USDC, but the signer only holds 100
@@ -272,7 +272,7 @@ contract LendingProtocolFlowsTest is Test {
     function test_RevertWhen_NonOwnerAddsMarket() public {
         vm.prank(signer);
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, signer));
-        lending.addMarket(address(usdc), 7500, 8000, 0, 0);
+        lending.addMarket(address(usdc), 7500, 8000);
     }
 
     function test_EmergencyRecoverEmitsEvent() public {

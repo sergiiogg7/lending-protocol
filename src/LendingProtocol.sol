@@ -37,8 +37,6 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
         IERC20 token; // The token being lent/borrowed
         uint256 totalSupply; // Total amount supplied to this market
         uint256 totalBorrow; // Total amount borrowed from this market
-        uint256 supplyRate; // Current supply rate (APY in basis points)
-        uint256 borrowRate; // Current borrow rate (APY in basis points)
         uint256 ltv; // Max loan-to-value in basis points: how much can be borrowed against this collateral
         uint256 liquidationThreshold; // Basis points of this collateral that count for the health factor
         bool isActive; // Whether this market is active
@@ -71,6 +69,11 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
     uint256 public constant LIQUIDATION_BONUS = 500; // 5% extra collateral for the liquidator, in basis points
     uint256 public constant CLOSE_FACTOR = 5000; // 50%: share of a debt that one liquidation may repay
     uint256 public constant CLOSE_FACTOR_HF_THRESHOLD = 0.95e18; // below this health factor 100% can be repaid
+    // Interest rate model (annual rates, 1e18 = 100%): a curve with a kink at the optimal utilization
+    uint256 public constant OPTIMAL_UTILIZATION = 0.8e18;
+    uint256 public constant BASE_BORROW_RATE = 0; // borrow rate at 0% utilization
+    uint256 public constant RATE_SLOPE_1 = 0.04e18; // rate added going from 0% to the optimal utilization
+    uint256 public constant RATE_SLOPE_2 = 0.75e18; // rate added going from the optimal utilization to 100%
     uint256 public constant BASIS_POINTS = 10000;
     uint256 public constant WAD = 1e18; // scale of the health factor: 1e18 means a health factor of 1
 
@@ -130,8 +133,6 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
         uint256 debtCovered,
         uint256 collateralSeized
     );
-    /// @notice Emitted when a market supply and borrow rates change.
-    event RatesUpdated(address indexed token, uint256 supplyRate, uint256 borrowRate);
     /// @notice Emitted when the owner recovers tokens.
     event EmergencyRecovered(address indexed token, address indexed to, uint256 amount);
 
@@ -162,16 +163,8 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
      * @param token The ERC20 token to add
      * @param ltv Max loan-to-value in basis points: how much can be borrowed against this token as collateral
      * @param liquidationThreshold Basis points of this token that count for the health factor (>= `ltv`)
-     * @param initialSupplyRate Initial supply rate in basis points
-     * @param initialBorrowRate Initial borrow rate in basis points
      */
-    function addMarket(
-        address token,
-        uint256 ltv,
-        uint256 liquidationThreshold,
-        uint256 initialSupplyRate,
-        uint256 initialBorrowRate
-    ) external onlyOwner {
+    function addMarket(address token, uint256 ltv, uint256 liquidationThreshold) external onlyOwner {
         if (token == address(0)) revert ZeroAddress();
         _checkRiskParameters(ltv, liquidationThreshold);
         if (markets[token].isActive) revert MarketAlreadyExists();
@@ -180,8 +173,6 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
             token: IERC20(token),
             totalSupply: 0,
             totalBorrow: 0,
-            supplyRate: initialSupplyRate,
-            borrowRate: initialBorrowRate,
             ltv: ltv,
             liquidationThreshold: liquidationThreshold,
             isActive: true
@@ -196,25 +187,18 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
      * @param token The token address
      * @param ltv New max loan-to-value in basis points
      * @param liquidationThreshold New liquidation threshold in basis points (>= `ltv`)
-     * @param supplyRate New supply rate
-     * @param borrowRate New borrow rate
      */
-    function updateMarket(
-        address token,
-        uint256 ltv,
-        uint256 liquidationThreshold,
-        uint256 supplyRate,
-        uint256 borrowRate
-    ) external onlyOwner onlyActiveMarket(token) {
+    function updateMarket(address token, uint256 ltv, uint256 liquidationThreshold)
+        external
+        onlyOwner
+        onlyActiveMarket(token)
+    {
         _checkRiskParameters(ltv, liquidationThreshold);
 
         markets[token].ltv = ltv;
         markets[token].liquidationThreshold = liquidationThreshold;
-        markets[token].supplyRate = supplyRate;
-        markets[token].borrowRate = borrowRate;
 
         emit MarketUpdated(token, ltv, liquidationThreshold);
-        emit RatesUpdated(token, supplyRate, borrowRate);
     }
 
     /**
@@ -559,6 +543,44 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
      */
     function getAvailableLiquidity(address token) public view returns (uint256) {
         return markets[token].totalSupply - markets[token].totalBorrow;
+    }
+
+    /**
+     * @notice Share of the supplied tokens that is lent out
+     * @param token The token address
+     * @return Utilization scaled by `WAD` (1e18 = 100%); 0 when nothing is supplied
+     */
+    function getUtilization(address token) public view returns (uint256) {
+        Market storage market = markets[token];
+        if (market.totalSupply == 0) return 0;
+        return Math.mulDiv(market.totalBorrow, WAD, market.totalSupply);
+    }
+
+    /**
+     * @notice Annual rate paid by borrowers, a function of the utilization with a kink at `OPTIMAL_UTILIZATION`
+     * @dev Below the kink the rate grows from `BASE_BORROW_RATE` by `RATE_SLOPE_1`; above it, `RATE_SLOPE_2` is added
+     *      proportionally to how far the utilization is into the remaining range. It rises steeply to attract
+     *      repayments and deposits when the market runs out of liquidity.
+     * @param token The token address
+     * @return The borrow rate, annual and scaled by `WAD`
+     */
+    function getBorrowRate(address token) public view returns (uint256) {
+        uint256 utilization = getUtilization(token);
+        if (utilization <= OPTIMAL_UTILIZATION) {
+            return BASE_BORROW_RATE + Math.mulDiv(RATE_SLOPE_1, utilization, OPTIMAL_UTILIZATION);
+        }
+        return BASE_BORROW_RATE + RATE_SLOPE_1
+            + Math.mulDiv(RATE_SLOPE_2, utilization - OPTIMAL_UTILIZATION, WAD - OPTIMAL_UTILIZATION);
+    }
+
+    /**
+     * @notice Annual rate earned by depositors: what borrowers pay, shared among everything supplied
+     * @dev supplyRate = borrowRate * utilization. There is no reserve factor, so depositors earn all the interest.
+     * @param token The token address
+     * @return The supply rate, annual and scaled by `WAD`
+     */
+    function getSupplyRate(address token) external view returns (uint256) {
+        return Math.mulDiv(getBorrowRate(token), getUtilization(token), WAD);
     }
 
     /**

@@ -39,8 +39,8 @@ contract LendingProtocolLiquidationTest is Test {
 
         vm.startPrank(owner);
         lending = new LendingProtocol(address(oracle));
-        lending.addMarket(address(usdc), 8000, 8500, 0, 0);
-        lending.addMarket(address(weth), 7500, 8000, 0, 0);
+        lending.addMarket(address(usdc), 8000, 8500);
+        lending.addMarket(address(weth), 7500, 8000);
         vm.stopPrank();
 
         // USDC liquidity
@@ -211,9 +211,9 @@ contract LendingProtocolLiquidationTest is Test {
     function test_RevertWhen_ThresholdTimesBonusExceedsOneHundredPercent() public {
         // 95.23 % * 1.05 = 99.99 % is accepted, 95.24 % * 1.05 = 100.002 % is not
         vm.startPrank(owner);
-        lending.updateMarket(address(weth), 7500, 9523, 0, 0);
+        lending.updateMarket(address(weth), 7500, 9523);
         vm.expectRevert(LendingProtocol.InvalidRiskParameters.selector);
-        lending.updateMarket(address(weth), 7500, 9524, 0, 0);
+        lending.updateMarket(address(weth), 7500, 9524);
         vm.stopPrank();
     }
 

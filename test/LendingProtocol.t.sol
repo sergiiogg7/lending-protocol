@@ -27,8 +27,6 @@ contract LendingProtocolTest is Test {
     uint256 public constant INITIAL_LIQUIDITY = INITIAL_SUPPLY / 4; // All tokens now use 18 decimals
     uint256 public constant LTV = 7500; // 75%
     uint256 public constant LIQUIDATION_THRESHOLD = 8000; // 80%
-    uint256 public constant SUPPLY_RATE = 500; // 5% APY
-    uint256 public constant BORROW_RATE = 800; // 8% APY
 
     // Events
     event MarketAdded(address indexed token, uint256 ltv, uint256 liquidationThreshold);
@@ -45,7 +43,6 @@ contract LendingProtocolTest is Test {
         uint256 debtCovered,
         uint256 collateralSeized
     );
-    event RatesUpdated(address indexed token, uint256 supplyRate, uint256 borrowRate);
 
     function setUp() public {
         // Setup accounts
@@ -71,9 +68,9 @@ contract LendingProtocolTest is Test {
 
         // Add markets
         vm.startPrank(owner);
-        lendingProtocol.addMarket(address(usdc), LTV, LIQUIDATION_THRESHOLD, SUPPLY_RATE, BORROW_RATE);
-        lendingProtocol.addMarket(address(weth), LTV, LIQUIDATION_THRESHOLD, SUPPLY_RATE, BORROW_RATE);
-        lendingProtocol.addMarket(address(dai), LTV, LIQUIDATION_THRESHOLD, SUPPLY_RATE, BORROW_RATE);
+        lendingProtocol.addMarket(address(usdc), LTV, LIQUIDATION_THRESHOLD);
+        lendingProtocol.addMarket(address(weth), LTV, LIQUIDATION_THRESHOLD);
+        lendingProtocol.addMarket(address(dai), LTV, LIQUIDATION_THRESHOLD);
         vm.stopPrank();
 
         // Distribute tokens to users
@@ -114,21 +111,19 @@ contract LendingProtocolTest is Test {
         vm.expectEmit(true, false, false, true);
         emit MarketAdded(address(newToken), 7000, 7500);
 
-        lendingProtocol.addMarket(address(newToken), 7000, 7500, 300, 800);
+        lendingProtocol.addMarket(address(newToken), 7000, 7500);
         vm.stopPrank();
 
         LendingProtocol.Market memory market = lendingProtocol.getMarket(address(newToken));
         assertTrue(market.isActive);
         assertEq(market.ltv, 7000);
         assertEq(market.liquidationThreshold, 7500);
-        assertEq(market.supplyRate, 300);
-        assertEq(market.borrowRate, 800);
     }
 
     function test_RevertWhen_AddMarketInvalidToken() public {
         vm.startPrank(owner);
         vm.expectRevert(LendingProtocol.ZeroAddress.selector);
-        lendingProtocol.addMarket(address(0), LTV, LIQUIDATION_THRESHOLD, SUPPLY_RATE, BORROW_RATE);
+        lendingProtocol.addMarket(address(0), LTV, LIQUIDATION_THRESHOLD);
         vm.stopPrank();
     }
 
@@ -137,14 +132,14 @@ contract LendingProtocolTest is Test {
 
         vm.startPrank(owner);
         vm.expectRevert(LendingProtocol.InvalidRiskParameters.selector);
-        lendingProtocol.addMarket(address(newToken), 11000, 11000, SUPPLY_RATE, BORROW_RATE);
+        lendingProtocol.addMarket(address(newToken), 11000, 11000);
         vm.stopPrank();
     }
 
     function test_RevertWhen_AddMarketAlreadyExists() public {
         vm.startPrank(owner);
         vm.expectRevert(LendingProtocol.MarketAlreadyExists.selector);
-        lendingProtocol.addMarket(address(usdc), LTV, LIQUIDATION_THRESHOLD, SUPPLY_RATE, BORROW_RATE);
+        lendingProtocol.addMarket(address(usdc), LTV, LIQUIDATION_THRESHOLD);
         vm.stopPrank();
     }
 
@@ -153,23 +148,18 @@ contract LendingProtocolTest is Test {
         vm.expectEmit(true, false, false, true);
         emit MarketUpdated(address(usdc), 7000, 7500);
 
-        vm.expectEmit(true, false, false, true);
-        emit RatesUpdated(address(usdc), 400, 900);
-
-        lendingProtocol.updateMarket(address(usdc), 7000, 7500, 400, 900);
+        lendingProtocol.updateMarket(address(usdc), 7000, 7500);
         vm.stopPrank();
 
         LendingProtocol.Market memory market = lendingProtocol.getMarket(address(usdc));
         assertEq(market.ltv, 7000);
         assertEq(market.liquidationThreshold, 7500);
-        assertEq(market.supplyRate, 400);
-        assertEq(market.borrowRate, 900);
     }
 
     function test_RevertWhen_UpdateMarketInvalidRiskParameters() public {
         vm.startPrank(owner);
         vm.expectRevert(LendingProtocol.InvalidRiskParameters.selector);
-        lendingProtocol.updateMarket(address(usdc), 11000, 11000, SUPPLY_RATE, BORROW_RATE);
+        lendingProtocol.updateMarket(address(usdc), 11000, 11000);
         vm.stopPrank();
     }
 
@@ -178,7 +168,7 @@ contract LendingProtocolTest is Test {
 
         vm.startPrank(owner);
         vm.expectRevert(LendingProtocol.MarketNotActive.selector);
-        lendingProtocol.updateMarket(address(newToken), 7000, 7500, SUPPLY_RATE, BORROW_RATE);
+        lendingProtocol.updateMarket(address(newToken), 7000, 7500);
         vm.stopPrank();
     }
 
@@ -540,8 +530,6 @@ contract LendingProtocolTest is Test {
         assertTrue(market.isActive);
         assertEq(market.ltv, LTV);
         assertEq(market.liquidationThreshold, LIQUIDATION_THRESHOLD);
-        assertEq(market.supplyRate, SUPPLY_RATE);
-        assertEq(market.borrowRate, BORROW_RATE);
         assertEq(market.totalSupply, INITIAL_LIQUIDITY);
     }
 
@@ -709,8 +697,8 @@ contract LendingProtocolTest is Test {
 
         // Make position liquidatable
         vm.startPrank(owner);
-        lendingProtocol.updateMarket(address(usdc), 3000, 3000, SUPPLY_RATE, BORROW_RATE);
-        lendingProtocol.updateMarket(address(weth), 3000, 3000, SUPPLY_RATE, BORROW_RATE);
+        lendingProtocol.updateMarket(address(usdc), 3000, 3000);
+        lendingProtocol.updateMarket(address(weth), 3000, 3000);
         vm.stopPrank();
 
         // Liquidate, seizing USDC

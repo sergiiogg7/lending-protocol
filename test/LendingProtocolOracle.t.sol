@@ -22,7 +22,7 @@ contract LendingProtocolOracleTest is Test {
 
         vm.startPrank(owner);
         lending = new LendingProtocol(address(oracle));
-        lending.addMarket(address(weth), 7500, 8000, 0, 0);
+        lending.addMarket(address(weth), 7500, 8000);
         vm.stopPrank();
 
         weth.mint(user, 1 ether);
@@ -44,7 +44,7 @@ contract LendingProtocolOracleTest is Test {
     function test_RevertWhen_TokenInPositionHasNoPrice() public {
         MockToken dai = new MockToken("Dai", "DAI", 18, 0); // listed as a market but the oracle has no price for it
         vm.prank(owner);
-        lending.addMarket(address(dai), 7500, 8000, 0, 0);
+        lending.addMarket(address(dai), 7500, 8000);
         dai.mint(user, 1 ether);
 
         vm.startPrank(user);
@@ -58,7 +58,7 @@ contract LendingProtocolOracleTest is Test {
     function test_PositionWithoutAssetInMarketDoesNotNeedItsPrice() public {
         MockToken dai = new MockToken("Dai", "DAI", 18, 0);
         vm.prank(owner);
-        lending.addMarket(address(dai), 7500, 8000, 0, 0);
+        lending.addMarket(address(dai), 7500, 8000);
 
         // the user holds no DAI, so the missing DAI price is never queried
         assertEq(lending.getHealthFactor(user), type(uint256).max);

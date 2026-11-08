@@ -30,8 +30,8 @@ contract LendingProtocolRiskTest is Test {
 
         vm.startPrank(owner);
         lending = new LendingProtocol(address(oracle));
-        lending.addMarket(address(usdc), 8000, 8500, 0, 0);
-        lending.addMarket(address(weth), 7500, 8000, 0, 0);
+        lending.addMarket(address(usdc), 8000, 8500);
+        lending.addMarket(address(weth), 7500, 8000);
         vm.stopPrank();
 
         // Liquidity provided by the lender in both markets
@@ -58,13 +58,13 @@ contract LendingProtocolRiskTest is Test {
     function test_RevertWhen_LtvAboveLiquidationThreshold() public {
         vm.prank(owner);
         vm.expectRevert(LendingProtocol.InvalidRiskParameters.selector);
-        lending.updateMarket(address(weth), 8100, 8000, 0, 0);
+        lending.updateMarket(address(weth), 8100, 8000);
     }
 
     function test_RevertWhen_ThresholdAboveOneHundredPercent() public {
         vm.prank(owner);
         vm.expectRevert(LendingProtocol.InvalidRiskParameters.selector);
-        lending.updateMarket(address(weth), 7500, 10_001, 0, 0);
+        lending.updateMarket(address(weth), 7500, 10_001);
     }
 
     // ---------------------------------------------------------------- bug #1: the first borrow must be checked

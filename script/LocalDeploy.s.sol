@@ -30,8 +30,8 @@ contract LocalDeploy is Script {
         oracle.setPrice(address(usdc), 1e8);
         oracle.setPrice(address(weth), 1e8);
 
-        lending.addMarket(address(usdc), LTV, LIQUIDATION_THRESHOLD, 500, 800);
-        lending.addMarket(address(weth), LTV, LIQUIDATION_THRESHOLD, 500, 800);
+        lending.addMarket(address(usdc), LTV, LIQUIDATION_THRESHOLD);
+        lending.addMarket(address(weth), LTV, LIQUIDATION_THRESHOLD);
 
         for (uint256 i = 0; i < users.length; i++) {
             usdc.mint(users[i], TOKENS_PER_ACCOUNT);
