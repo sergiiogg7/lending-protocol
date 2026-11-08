@@ -27,7 +27,7 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
 
     // Structs
     /// @dev Stored state of a market. Supply and borrow are SCALED: amount / index at the time of the operation.
-    ///      Real amounts are scaled * index / WAD, so one index grows the interest of every user at once.
+    ///      Real amounts are scaled * index / RAY, so one index grows the interest of every user at once.
     struct MarketState {
         IERC20 token; // The token being lent/borrowed
         uint256 scaledSupply; // Sum of the scaled deposits of all users
@@ -85,7 +85,8 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
     uint256 public constant RATE_SLOPE_1 = 0.04e18; // rate added going from 0% to the optimal utilization
     uint256 public constant RATE_SLOPE_2 = 0.75e18; // rate added going from the optimal utilization to 100%
     uint256 public constant BASIS_POINTS = 10000;
-    uint256 public constant WAD = 1e18; // scale of the health factor, rates and indexes: 1e18 means 1
+    uint256 public constant WAD = 1e18; // scale of the health factor, rates and utilization: 1e18 means 1
+    uint256 public constant RAY = 1e27; // scale of the interest indexes: 27 decimals keep rounding errors negligible
     uint256 public constant SECONDS_PER_YEAR = 365 days;
 
     // Errors
@@ -186,8 +187,8 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
             token: IERC20(token),
             scaledSupply: 0,
             scaledBorrow: 0,
-            liquidityIndex: WAD,
-            borrowIndex: WAD,
+            liquidityIndex: RAY,
+            borrowIndex: RAY,
             lastUpdateTimestamp: block.timestamp,
             ltv: ltv,
             liquidationThreshold: liquidationThreshold,
@@ -261,7 +262,7 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
         if (!canBorrow(msg.sender, token, amount)) revert BorrowExceedsCollateral();
 
         // The debt is rounded up: the borrower never owes less than was lent
-        uint256 scaled = Math.mulDiv(amount, WAD, markets[token].borrowIndex, Math.Rounding.Ceil);
+        uint256 scaled = Math.mulDiv(amount, RAY, markets[token].borrowIndex, Math.Rounding.Ceil);
         scaledBorrows[msg.sender][token] += scaled;
         markets[token].scaledBorrow += scaled;
 
@@ -494,7 +495,7 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
         _accrue(token);
 
         // Rounded down: the depositor never gets a claim larger than what was handed over
-        uint256 scaled = Math.mulDiv(amount, WAD, markets[token].liquidityIndex);
+        uint256 scaled = Math.mulDiv(amount, RAY, markets[token].liquidityIndex);
         if (scaled == 0) revert ZeroAmount();
         scaledDeposits[msg.sender][token] += scaled;
         markets[token].scaledSupply += scaled;
@@ -508,7 +509,7 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
     /// @dev Removes `amount` (real units) from a user deposit; the scaled amount is rounded up.
     function _burnDeposit(address user, address token, uint256 amount) internal {
         uint256 userScaled = scaledDeposits[user][token];
-        uint256 scaled = Math.mulDiv(amount, WAD, markets[token].liquidityIndex, Math.Rounding.Ceil);
+        uint256 scaled = Math.mulDiv(amount, RAY, markets[token].liquidityIndex, Math.Rounding.Ceil);
         if (scaled > userScaled) scaled = userScaled;
         scaledDeposits[user][token] = userScaled - scaled;
         markets[token].scaledSupply -= scaled;
@@ -518,7 +519,7 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
     ///      erases more debt than was paid.
     function _burnDebt(address user, address token, uint256 amount) internal {
         uint256 userScaled = scaledBorrows[user][token];
-        uint256 scaled = Math.mulDiv(amount, WAD, markets[token].borrowIndex);
+        uint256 scaled = Math.mulDiv(amount, RAY, markets[token].borrowIndex);
         if (scaled > userScaled) scaled = userScaled;
         if (scaled == 0) revert ZeroAmount();
         scaledBorrows[user][token] = userScaled - scaled;
@@ -537,6 +538,8 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
      * @dev The indexes of a market projected to the current block, without writing them.
      *      newIndex = index * (1 + rate * elapsed / year), with the rates of the last update (they only change when
      *      someone interacts with the market). The borrow index is rounded up and the liquidity index down.
+     *      Everything is computed in RAY: the supply rate is borrowRate * borrowed / supplied, so what depositors earn
+     *      matches what borrowers pay up to a rounding error of 1e-27.
      */
     function _indexes(MarketState storage market) internal view returns (uint256 liquidityIndex, uint256 borrowIndex) {
         liquidityIndex = market.liquidityIndex;
@@ -544,20 +547,27 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
         uint256 elapsed = block.timestamp - market.lastUpdateTimestamp;
         if (elapsed == 0) return (liquidityIndex, borrowIndex);
 
-        uint256 utilization = _utilization(market);
-        uint256 borrowRate = _borrowRate(utilization);
-        uint256 supplyRate = Math.mulDiv(borrowRate, utilization, WAD);
+        (uint256 supplied, uint256 borrowed) = _storedTotals(market);
+        uint256 borrowRate = _borrowRate(_utilization(market)) * (RAY / WAD);
+        uint256 supplyRate =
+            supplied == 0 ? 0 : Math.mulDiv(borrowRate, borrowed > supplied ? supplied : borrowed, supplied);
+
         borrowIndex =
-            Math.mulDiv(borrowIndex, WAD + Math.mulDiv(borrowRate, elapsed, SECONDS_PER_YEAR), WAD, Math.Rounding.Ceil);
-        liquidityIndex = Math.mulDiv(liquidityIndex, WAD + Math.mulDiv(supplyRate, elapsed, SECONDS_PER_YEAR), WAD);
+            Math.mulDiv(borrowIndex, RAY + Math.mulDiv(borrowRate, elapsed, SECONDS_PER_YEAR), RAY, Math.Rounding.Ceil);
+        liquidityIndex = Math.mulDiv(liquidityIndex, RAY + Math.mulDiv(supplyRate, elapsed, SECONDS_PER_YEAR), RAY);
+    }
+
+    /// @dev Total supplied (rounded down) and borrowed (rounded up) with the stored indexes, as of the last update.
+    function _storedTotals(MarketState storage market) internal view returns (uint256 supplied, uint256 borrowed) {
+        supplied = Math.mulDiv(market.scaledSupply, market.liquidityIndex, RAY);
+        borrowed = Math.mulDiv(market.scaledBorrow, market.borrowIndex, RAY, Math.Rounding.Ceil);
     }
 
     /// @dev Utilization from the stored indexes, capped at 100 %: rounding can leave the debt a wei above the supply.
     function _utilization(MarketState storage market) internal view returns (uint256) {
-        uint256 supply = Math.mulDiv(market.scaledSupply, market.liquidityIndex, WAD);
-        if (supply == 0) return 0;
-        uint256 borrowed = Math.mulDiv(market.scaledBorrow, market.borrowIndex, WAD, Math.Rounding.Ceil);
-        return borrowed >= supply ? WAD : Math.mulDiv(borrowed, WAD, supply);
+        (uint256 supplied, uint256 borrowed) = _storedTotals(market);
+        if (supplied == 0) return 0;
+        return borrowed >= supplied ? WAD : Math.mulDiv(borrowed, WAD, supplied);
     }
 
     /// @dev The kinked rate curve; see `getBorrowRate`.
@@ -572,13 +582,13 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
     /// @dev Real deposit of a user (interest included, rounded down) as of the current block.
     function _userDeposit(address user, address token) internal view returns (uint256) {
         (uint256 liquidityIndex,) = _indexes(markets[token]);
-        return Math.mulDiv(scaledDeposits[user][token], liquidityIndex, WAD);
+        return Math.mulDiv(scaledDeposits[user][token], liquidityIndex, RAY);
     }
 
     /// @dev Real debt of a user (interest included, rounded up) as of the current block.
     function _userBorrow(address user, address token) internal view returns (uint256) {
         (, uint256 borrowIndex) = _indexes(markets[token]);
-        return Math.mulDiv(scaledBorrows[user][token], borrowIndex, WAD, Math.Rounding.Ceil);
+        return Math.mulDiv(scaledBorrows[user][token], borrowIndex, RAY, Math.Rounding.Ceil);
     }
 
     /// @dev Reverts unless `ltv <= liquidationThreshold` and `liquidationThreshold * (1 + bonus) <= 100 %`, so that
@@ -609,8 +619,8 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
         (uint256 liquidityIndex, uint256 borrowIndex) = _indexes(market);
         return Market({
             token: market.token,
-            totalSupply: Math.mulDiv(market.scaledSupply, liquidityIndex, WAD),
-            totalBorrow: Math.mulDiv(market.scaledBorrow, borrowIndex, WAD, Math.Rounding.Ceil),
+            totalSupply: Math.mulDiv(market.scaledSupply, liquidityIndex, RAY),
+            totalBorrow: Math.mulDiv(market.scaledBorrow, borrowIndex, RAY, Math.Rounding.Ceil),
             liquidityIndex: liquidityIndex,
             borrowIndex: borrowIndex,
             lastUpdateTimestamp: market.lastUpdateTimestamp,
@@ -629,8 +639,8 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
     function getAvailableLiquidity(address token) public view returns (uint256) {
         MarketState storage market = markets[token];
         (uint256 liquidityIndex, uint256 borrowIndex) = _indexes(market);
-        uint256 supplied = Math.mulDiv(market.scaledSupply, liquidityIndex, WAD);
-        uint256 borrowed = Math.mulDiv(market.scaledBorrow, borrowIndex, WAD, Math.Rounding.Ceil);
+        uint256 supplied = Math.mulDiv(market.scaledSupply, liquidityIndex, RAY);
+        uint256 borrowed = Math.mulDiv(market.scaledBorrow, borrowIndex, RAY, Math.Rounding.Ceil);
         return supplied > borrowed ? supplied - borrowed : 0;
     }
 

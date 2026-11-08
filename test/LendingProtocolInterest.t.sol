@@ -72,8 +72,8 @@ contract LendingProtocolInterestTest is Test {
 
     function test_IndexesStartAtOne() public view {
         LendingProtocol.Market memory market = lending.getMarket(address(usdc));
-        assertEq(market.liquidityIndex, 1e18);
-        assertEq(market.borrowIndex, 1e18);
+        assertEq(market.liquidityIndex, 1e27);
+        assertEq(market.borrowIndex, 1e27);
     }
 
     function test_NoTimeNoInterest() public {
@@ -81,7 +81,7 @@ contract LendingProtocolInterestTest is Test {
 
         assertEq(lending.getUserBorrow(alice, address(usdc)), 800e6);
         assertEq(lending.getUserDeposit(lender, address(usdc)), 1000e6);
-        assertEq(lending.getMarket(address(usdc)).borrowIndex, 1e18);
+        assertEq(lending.getMarket(address(usdc)).borrowIndex, 1e27);
     }
 
     function test_NoBorrowsNoInterest() public {

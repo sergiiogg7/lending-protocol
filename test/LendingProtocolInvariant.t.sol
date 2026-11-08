@@ -176,11 +176,9 @@ contract LendingProtocolInvariantTest is StdInvariant, Test {
     function _checkSolvency(MockToken token) internal view {
         LendingProtocol.Market memory market = lending.getMarket(address(token));
         if (market.totalSupply > market.totalBorrow) {
-            // The cash held covers what is supplied and not lent out. The indexes have 18 decimals, so every accrual
-            // can be off by 1e-18 of the balance in either direction (Aave uses 27 decimals to make this negligible):
-            // allow one part in 1e15 of the supply on top of a few wei.
-            uint256 tolerance = DUST + market.totalSupply / 1e15;
-            assertGe(token.balanceOf(address(lending)) + tolerance, market.totalSupply - market.totalBorrow);
+            // The cash held covers what is supplied and not lent out. The indexes have 27 decimals, so accruing
+            // interest on a balance adds an error far below one wei; only the per-user rounding is left.
+            assertGe(token.balanceOf(address(lending)) + DUST, market.totalSupply - market.totalBorrow);
         }
     }
 
@@ -192,7 +190,7 @@ contract LendingProtocolInvariantTest is StdInvariant, Test {
 
     function _checkIndexes(MockToken token) internal view {
         LendingProtocol.Market memory market = lending.getMarket(address(token));
-        assertGe(market.liquidityIndex, 1e18);
+        assertGe(market.liquidityIndex, 1e27);
         // borrowers pay at least what lenders earn
         assertGe(market.borrowIndex, market.liquidityIndex);
     }

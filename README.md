@@ -5,7 +5,7 @@ A minimal lending and borrowing protocol on Ethereum, built with Foundry and mod
 ![CI](https://github.com/sergiiogg7/lending-protocol/actions/workflows/test.yml/badge.svg)
 ![Solidity 0.8.24](https://img.shields.io/badge/Solidity-0.8.24-blue)
 ![Foundry](https://img.shields.io/badge/Built%20with-Foundry-orange)
-![Tests 122](https://img.shields.io/badge/tests-122%20passing-brightgreen)
+![Tests 131](https://img.shields.io/badge/tests-131%20passing-brightgreen)
 
 > **Not audited and not safe for real funds.** Several issues are still open (owner powers, token validation, a signed deposit with no real purpose) and are listed in [SECURITY.md](SECURITY.md).
 
@@ -29,7 +29,7 @@ Per market, `ltv` (how much you can borrow against it) and `liquidationThreshold
 
 ### Interest
 
-Rates are not set by anyone: they are computed from the utilization `borrowed / supplied`. The borrow rate follows a curve with a kink at 80 % utilization (0 % at no use, 4 % at the kink, 79 % at 100 %), and the supply rate is `borrowRate * utilization`, so depositors earn everything borrowers pay (no reserve factor). Interest accrues with two indexes per market, `liquidityIndex` and `borrowIndex`: balances are stored scaled (`amount / index`) and read as `scaled * index`, so growing one number grows the balance of every user. Indexes are updated on every interaction with the market, and the views project them to the current block.
+Rates are not set by anyone: they are computed from the utilization `borrowed / supplied`. The borrow rate follows a curve with a kink at 80 % utilization (0 % at no use, 4 % at the kink, 79 % at 100 %), and the supply rate is `borrowRate * utilization`, so depositors earn everything borrowers pay (no reserve factor). Interest accrues with two indexes per market, `liquidityIndex` and `borrowIndex`: balances are stored scaled (`amount / index`) and read as `scaled * index`, so growing one number grows the balance of every user. Indexes have 27 decimals (`RAY`, as in Aave) and are updated on every interaction with the market; the views project them to the current block.
 
 ## Usage example
 
@@ -65,7 +65,7 @@ forge test -vvv
 forge coverage --no-match-coverage "script|test"
 ```
 
-122 tests: unit, fuzz and invariants (market totals match user balances, the contract holds the cash that backs supplied minus borrowed, indexes only grow), 100 % line coverage on `src/`. The risk model, liquidation, rates and interest each have their own suite and an end-to-end scenario with exact numbers. Dependencies: OpenZeppelin Contracts v5.4.0 and forge-std (git submodules).
+131 tests: unit, fuzz and invariants (market totals match user balances, the contract holds the cash that backs supplied minus borrowed, indexes only grow), 100 % line coverage on `src/`. The risk model, liquidation, rates and interest each have their own suite and an end-to-end scenario with exact numbers. Dependencies: OpenZeppelin Contracts v5.4.0 and forge-std (git submodules).
 
 ## Local deployment
 
