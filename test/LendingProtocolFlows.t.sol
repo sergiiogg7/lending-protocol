@@ -4,15 +4,13 @@ pragma solidity 0.8.24;
 import {Test} from "forge-std/Test.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {LendingProtocol} from "../src/LendingProtocol.sol";
 import {MockToken} from "./mocks/MockToken.sol";
 import {MockPriceOracle} from "./mocks/MockPriceOracle.sol";
 
-/// @dev Unit tests for flows not covered by `LendingProtocol.t.sol`: signed deposits, multi-step borrowing,
+/// @dev Unit tests for flows not covered by `LendingProtocol.t.sol`: multi-step borrowing,
 ///      liquidation, pause behaviour and two-step ownership.
 contract LendingProtocolFlowsTest is Test {
-    event Deposit(address indexed user, address indexed token, uint256 amount);
     event EmergencyRecovered(address indexed token, address indexed to, uint256 amount);
 
     LendingProtocol internal lending;
@@ -23,13 +21,12 @@ contract LendingProtocolFlowsTest is Test {
     address internal owner = makeAddr("owner");
     address internal lp = makeAddr("lp");
     address internal liquidator = makeAddr("liquidator");
-    uint256 internal signerKey = 0xA11CE;
     address internal signer;
 
     uint256 internal constant AMOUNT = 100 ether;
 
     function setUp() public {
-        signer = vm.addr(signerKey);
+        signer = makeAddr("signer");
         oracle = new MockPriceOracle();
         vm.prank(owner);
         lending = new LendingProtocol(address(oracle));
@@ -55,48 +52,6 @@ contract LendingProtocolFlowsTest is Test {
 
         vm.prank(lp);
         lending.deposit(address(weth), 500 ether);
-    }
-
-    function _sign(uint256 key, address token, uint256 amount, uint256 nonce, uint256 deadline)
-        internal
-        pure
-        returns (LendingProtocol.SignatureData memory)
-    {
-        bytes32 digest = MessageHashUtils.toEthSignedMessageHash(
-            keccak256(abi.encodePacked("deposit", token, amount, nonce, deadline))
-        );
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(key, digest);
-        return LendingProtocol.SignatureData({nonce: nonce, deadline: deadline, signature: abi.encodePacked(r, s, v)});
-    }
-
-    // ---------------------------------------------------------------- signed deposit
-
-    function test_DepositWithSignature() public {
-        LendingProtocol.SignatureData memory sig = _sign(signerKey, address(usdc), AMOUNT, 0, block.timestamp + 1 hours);
-
-        vm.expectEmit(true, true, false, true);
-        emit Deposit(signer, address(usdc), AMOUNT);
-        vm.prank(signer);
-        lending.depositWithSignature(address(usdc), AMOUNT, sig);
-
-        assertEq(lending.getUserDeposit(signer, address(usdc)), AMOUNT);
-        assertEq(lending.getNonce(signer), 1);
-    }
-
-    function test_RevertWhen_DepositWithSignatureReplayed() public {
-        LendingProtocol.SignatureData memory sig = _sign(signerKey, address(usdc), AMOUNT, 0, block.timestamp + 1 hours);
-        vm.startPrank(signer);
-        lending.depositWithSignature(address(usdc), AMOUNT, sig);
-        vm.expectRevert(LendingProtocol.InvalidNonce.selector);
-        lending.depositWithSignature(address(usdc), AMOUNT, sig);
-        vm.stopPrank();
-    }
-
-    function test_RevertWhen_DepositWithSignatureZeroAmount() public {
-        LendingProtocol.SignatureData memory sig = _sign(signerKey, address(usdc), 0, 0, block.timestamp + 1 hours);
-        vm.prank(signer);
-        vm.expectRevert(LendingProtocol.ZeroAmount.selector);
-        lending.depositWithSignature(address(usdc), 0, sig);
     }
 
     // ---------------------------------------------------------------- borrow / withdraw / liquidate

@@ -17,7 +17,7 @@ Goal: understand lending and borrowing by building a simplified Aave V3-style co
 | 4 | #9 (done 2026-11-08) | Borrow against real available liquidity (`totalSupply - totalBorrow`). | Accounting correctness. |
 | 5 | #7, #12 (done 2026-11-08) | Interest: utilization-based borrow rate (kinked curve), supply rate from borrow rate and utilization, per-market liquidity and borrow indexes. | The heart of Aave and Compound. |
 | 6 | #4, #5 (done 2026-11-08) | Owner limits: `emergencyRecover` only for surplus (never user funds), bounded parameter changes. | Centralization risk. |
-| 7 | #8 | Remove `depositWithSignature` (not gasless, adds attack surface). | Simplify. |
+| 7 | #8 (done 2026-11-08) | Remove `depositWithSignature` (not gasless, adds attack surface). | Simplify. |
 | 8 | #10, #11, #14 (the `User` struct part done 2026-11-08) | Token validation, cap on markets, cleanup. | Hardening. |
 
 ## Deliberately left out (Aave has it, it adds difficulty but little understanding)

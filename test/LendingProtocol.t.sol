@@ -5,7 +5,6 @@ import {Test} from "forge-std/Test.sol";
 import {LendingProtocol} from "../src/LendingProtocol.sol";
 import {MockToken} from "./mocks/MockToken.sol";
 import {MockPriceOracle} from "./mocks/MockPriceOracle.sol";
-import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 
 contract LendingProtocolTest is Test {
     LendingProtocol public lendingProtocol;
@@ -380,75 +379,6 @@ contract LendingProtocolTest is Test {
         vm.stopPrank();
     }
 
-    // ============ SIGNATURE VERIFICATION TESTS ============
-
-    function test_RevertWhen_DepositWithSignatureExpired() public {
-        vm.startPrank(user1);
-
-        uint256 nonce = lendingProtocol.getNonce(user1);
-        uint256 deadline = block.timestamp - 1; // Expired
-
-        bytes32 messageHash = keccak256(abi.encodePacked("deposit", address(usdc), DEPOSIT_AMOUNT, nonce, deadline));
-        bytes32 ethSignedMessageHash = MessageHashUtils.toEthSignedMessageHash(messageHash);
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(user1PrivateKey(), ethSignedMessageHash);
-        bytes memory signature = abi.encodePacked(r, s, v);
-
-        LendingProtocol.SignatureData memory sigData =
-            LendingProtocol.SignatureData({nonce: nonce, deadline: deadline, signature: signature});
-
-        usdc.approve(address(lendingProtocol), DEPOSIT_AMOUNT);
-
-        vm.expectRevert(LendingProtocol.SignatureExpired.selector);
-        lendingProtocol.depositWithSignature(address(usdc), DEPOSIT_AMOUNT, sigData);
-
-        vm.stopPrank();
-    }
-
-    function test_RevertWhen_DepositWithSignatureInvalidNonce() public {
-        vm.startPrank(user1);
-
-        uint256 nonce = lendingProtocol.getNonce(user1) + 1; // Wrong nonce
-        uint256 deadline = block.timestamp + 1 hours;
-
-        bytes32 messageHash = keccak256(abi.encodePacked("deposit", address(usdc), DEPOSIT_AMOUNT, nonce, deadline));
-        bytes32 ethSignedMessageHash = MessageHashUtils.toEthSignedMessageHash(messageHash);
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(user1PrivateKey(), ethSignedMessageHash);
-        bytes memory signature = abi.encodePacked(r, s, v);
-
-        LendingProtocol.SignatureData memory sigData =
-            LendingProtocol.SignatureData({nonce: nonce, deadline: deadline, signature: signature});
-
-        usdc.approve(address(lendingProtocol), DEPOSIT_AMOUNT);
-
-        vm.expectRevert(LendingProtocol.InvalidNonce.selector);
-        lendingProtocol.depositWithSignature(address(usdc), DEPOSIT_AMOUNT, sigData);
-
-        vm.stopPrank();
-    }
-
-    function test_RevertWhen_DepositWithSignatureInvalidSignature() public {
-        vm.startPrank(user1);
-
-        uint256 nonce = lendingProtocol.getNonce(user1);
-        uint256 deadline = block.timestamp + 1 hours;
-
-        // Use wrong signer
-        bytes32 messageHash = keccak256(abi.encodePacked("deposit", address(usdc), DEPOSIT_AMOUNT, nonce, deadline));
-        bytes32 ethSignedMessageHash = MessageHashUtils.toEthSignedMessageHash(messageHash);
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(user2PrivateKey(), ethSignedMessageHash);
-        bytes memory signature = abi.encodePacked(r, s, v);
-
-        LendingProtocol.SignatureData memory sigData =
-            LendingProtocol.SignatureData({nonce: nonce, deadline: deadline, signature: signature});
-
-        usdc.approve(address(lendingProtocol), DEPOSIT_AMOUNT);
-
-        vm.expectRevert(LendingProtocol.InvalidSignature.selector);
-        lendingProtocol.depositWithSignature(address(usdc), DEPOSIT_AMOUNT, sigData);
-
-        vm.stopPrank();
-    }
-
     // ============ LIQUIDATION TESTS ============
 
     function test_RevertWhen_LiquidateZeroAmount() public {
@@ -616,16 +546,6 @@ contract LendingProtocolTest is Test {
 
         // If we reach here, reentrancy protection is working
         assertTrue(true);
-    }
-
-    // ============ HELPER FUNCTIONS ============
-
-    function user1PrivateKey() internal pure returns (uint256) {
-        return 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
-    }
-
-    function user2PrivateKey() internal pure returns (uint256) {
-        return 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d;
     }
 
     // ============ EDGE CASES AND COMPREHENSIVE TESTS ============

@@ -9,21 +9,16 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {Ownable, Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
-import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 
 /**
  * @title LendingProtocol
  * @notice A DeFi lending and borrowing protocol that allows users to:
  * - Deposit tokens to earn interest
  * - Borrow tokens against their deposited collateral
- * - Use off-chain signatures for gasless operations
  * - Manage collateralization ratios and liquidation
  */
 contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
     using SafeERC20 for IERC20;
-    using ECDSA for bytes32;
-    using MessageHashUtils for bytes32;
 
     // Structs
     /// @dev Stored state of a market. Supply and borrow are SCALED: amount / index at the time of the operation.
@@ -66,17 +61,10 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
         uint256 executableAt; // Timestamp from which it can be executed; 0 when nothing is pending
     }
 
-    struct SignatureData {
-        uint256 nonce; // Unique nonce for signature
-        uint256 deadline; // Signature expiration time
-        bytes signature; // ECDSA signature
-    }
-
     // State variables
     mapping(address => mapping(address => uint256)) internal scaledDeposits; // user => token => scaled amount
     mapping(address => mapping(address => uint256)) internal scaledBorrows; // user => token => scaled amount
     mapping(address => MarketState) internal markets;
-    mapping(address => uint256) public userNonces;
     mapping(address => PendingThreshold) internal pendingThresholds; // token => proposed threshold decrease
 
     /// @notice Price source: USD per whole token, 8 decimals. Immutable on purpose.
@@ -118,12 +106,6 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
     error BorrowExceedsCollateral();
     /// @notice The user owes less than the requested repayment.
     error InsufficientBorrow();
-    /// @notice The signature deadline has passed.
-    error SignatureExpired();
-    /// @notice The signature nonce is not the user's current nonce.
-    error InvalidNonce();
-    /// @notice The recovered signer is not the caller.
-    error InvalidSignature();
     /// @notice The user has no debt in the token to liquidate.
     error NoDebtToLiquidate();
     /// @notice The health factor of the position is not below 1.
@@ -171,14 +153,6 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
     modifier onlyActiveMarket(address token) {
         if (!markets[token].isActive) revert MarketNotActive();
         _;
-    }
-
-    /// @notice Checks deadline and nonce of `sigData` and bumps the caller nonce after the function body.
-    modifier onlyValidSignature(SignatureData calldata sigData) {
-        if (block.timestamp > sigData.deadline) revert SignatureExpired();
-        if (userNonces[msg.sender] != sigData.nonce) revert InvalidNonce();
-        _;
-        userNonces[msg.sender]++;
     }
 
     /// @notice Deploys the protocol; the deployer becomes the owner.
@@ -374,30 +348,6 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
     }
 
     /**
-     * @notice Gasless deposit using off-chain signature
-     * @param token The token to deposit
-     * @param amount The amount to deposit
-     * @param sigData Signature data for verification
-     */
-    function depositWithSignature(address token, uint256 amount, SignatureData calldata sigData)
-        external
-        nonReentrant
-        whenNotPaused
-        onlyActiveMarket(token)
-        onlyValidSignature(sigData)
-    {
-        if (amount == 0) revert ZeroAmount();
-
-        // Verify signature
-        bytes32 messageHash = keccak256(abi.encodePacked("deposit", token, amount, sigData.nonce, sigData.deadline));
-        bytes32 ethSignedMessageHash = MessageHashUtils.toEthSignedMessageHash(messageHash);
-        address signer = ethSignedMessageHash.recover(sigData.signature);
-        if (signer != msg.sender) revert InvalidSignature();
-
-        _deposit(token, amount);
-    }
-
-    /**
      * @notice Liquidate an unhealthy position: repay part of its debt and receive its collateral plus a bonus
      * @dev Requires a health factor below 1. At most `CLOSE_FACTOR` (50 %) of the user's debt in `debtToken` can be
      *      repaid, or all of it when the health factor is below `CLOSE_FACTOR_HF_THRESHOLD`; a larger `debtToCover`
@@ -569,7 +519,7 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
         return Math.mulDiv(amount, oracle.getAssetPrice(token), 10 ** IERC20Metadata(token).decimals(), rounding);
     }
 
-    /// @dev Shared by `deposit` and `depositWithSignature`.
+    /// @dev Credits `amount` to the caller, as scaled shares, and pulls the tokens.
     function _deposit(address token, uint256 amount) internal {
         if (amount == 0) revert ZeroAmount();
         _accrue(token);
@@ -678,15 +628,6 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
         // so that huge inputs revert with the custom error and do not overflow.
         uint256 maxThreshold = (BASIS_POINTS * BASIS_POINTS) / (BASIS_POINTS + LIQUIDATION_BONUS);
         if (ltv > liquidationThreshold || liquidationThreshold > maxThreshold) revert InvalidRiskParameters();
-    }
-
-    /**
-     * @notice Get user's nonce for signature verification
-     * @param user The user address
-     * @return The current nonce
-     */
-    function getNonce(address user) external view returns (uint256) {
-        return userNonces[user];
     }
 
     /**
