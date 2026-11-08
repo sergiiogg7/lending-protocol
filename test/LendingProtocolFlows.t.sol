@@ -38,8 +38,8 @@ contract LendingProtocolFlowsTest is Test {
         oracle.setPrice(address(weth), 1e8);
 
         vm.startPrank(owner);
-        lending.addMarket(address(usdc), 8000, 500, 800);
-        lending.addMarket(address(weth), 8000, 500, 800);
+        lending.addMarket(address(usdc), 7500, 8000, 500, 800);
+        lending.addMarket(address(weth), 7500, 8000, 500, 800);
         vm.stopPrank();
 
         address[3] memory actors = [signer, lp, liquidator];
@@ -148,7 +148,7 @@ contract LendingProtocolFlowsTest is Test {
         vm.stopPrank();
 
         vm.prank(owner);
-        lending.updateMarket(address(usdc), 3000, 500, 800); // collateral value 30 < debt 50 * 80%
+        lending.updateMarket(address(usdc), 3000, 3000, 500, 800); // collateral counted 30 < debt 50
         assertTrue(lending.isLiquidatable(signer));
 
         vm.prank(liquidator);
@@ -165,9 +165,9 @@ contract LendingProtocolFlowsTest is Test {
         lending.borrow(address(weth), 50 ether);
         vm.stopPrank();
 
-        // collateral factor 0 -> the deposit has no value, so findBestCollateral returns address(0)
+        // threshold 0 -> the deposit has no value, so findBestCollateral returns address(0)
         vm.prank(owner);
-        lending.updateMarket(address(usdc), 0, 500, 800);
+        lending.updateMarket(address(usdc), 0, 0, 500, 800);
 
         vm.prank(liquidator);
         vm.expectRevert(LendingProtocol.NoCollateralToSeize.selector);
@@ -182,8 +182,8 @@ contract LendingProtocolFlowsTest is Test {
         vm.stopPrank();
 
         vm.startPrank(owner);
-        lending.updateMarket(address(usdc), 5000, 500, 800);
-        lending.updateMarket(address(weth), 5000, 500, 800);
+        lending.updateMarket(address(usdc), 5000, 5000, 500, 800);
+        lending.updateMarket(address(weth), 5000, 5000, 500, 800);
         vm.stopPrank();
 
         // best collateral is usdc (first of two equal values) and holds 100, but 100 * 105% = 105 must be seized
@@ -193,7 +193,7 @@ contract LendingProtocolFlowsTest is Test {
     }
 
     function test_CanBorrowAndCanWithdrawViews() public {
-        assertTrue(lending.canBorrow(signer, address(weth), 1 ether)); // no debt yet
+        assertFalse(lending.canBorrow(signer, address(weth), 1 ether)); // no collateral yet
         vm.startPrank(signer);
         lending.deposit(address(usdc), AMOUNT);
         lending.borrow(address(weth), 50 ether);
@@ -203,7 +203,7 @@ contract LendingProtocolFlowsTest is Test {
         assertFalse(lending.canBorrow(signer, address(weth), 100 ether));
         assertTrue(lending.canWithdraw(signer, address(usdc), 10 ether));
         assertFalse(lending.canWithdraw(signer, address(usdc), AMOUNT));
-        assertEq(lending.getCollateralizationRatio(signer), 16_000);
+        assertEq(lending.getHealthFactor(signer), 1.6 ether); // 100 * 80% / 50
     }
 
     // ---------------------------------------------------------------- pause
@@ -268,7 +268,7 @@ contract LendingProtocolFlowsTest is Test {
     function test_RevertWhen_NonOwnerAddsMarket() public {
         vm.prank(signer);
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, signer));
-        lending.addMarket(address(usdc), 8000, 0, 0);
+        lending.addMarket(address(usdc), 7500, 8000, 0, 0);
     }
 
     function test_EmergencyRecoverEmitsEvent() public {

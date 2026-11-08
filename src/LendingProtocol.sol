@@ -2,6 +2,7 @@
 pragma solidity 0.8.24;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {IPriceOracle} from "./interfaces/IPriceOracle.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -38,8 +39,16 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
         uint256 totalBorrow; // Total amount borrowed from this market
         uint256 supplyRate; // Current supply rate (APY in basis points)
         uint256 borrowRate; // Current borrow rate (APY in basis points)
-        uint256 collateralFactor; // Collateral factor (0-10000, where 10000 = 100%)
+        uint256 ltv; // Max loan-to-value in basis points: how much can be borrowed against this collateral
+        uint256 liquidationThreshold; // Basis points of this collateral that count for the health factor
         bool isActive; // Whether this market is active
+    }
+
+    /// @dev A user position valued in USD (8 decimals). Collateral is rounded down and debt rounded up.
+    struct Position {
+        uint256 ltvCollateralUsd; // sum(collateral * ltv): the most debt the position may hold
+        uint256 thresholdCollateralUsd; // sum(collateral * liquidationThreshold): counted by the health factor
+        uint256 debtUsd; // sum(debt)
     }
 
     struct SignatureData {
@@ -59,28 +68,28 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
     IPriceOracle public immutable oracle;
 
     address[] public supportedTokens;
-    uint256 public constant LIQUIDATION_THRESHOLD = 8000; // 80% in basis points
     uint256 public constant LIQUIDATION_PENALTY = 500; // 5% in basis points
     uint256 public constant BASIS_POINTS = 10000;
+    uint256 public constant WAD = 1e18; // scale of the health factor: 1e18 means a health factor of 1
 
     // Errors
     /// @notice A required address argument is the zero address.
     error ZeroAddress();
     /// @notice An amount argument is zero.
     error ZeroAmount();
-    /// @notice The collateral factor is above `BASIS_POINTS`.
-    error InvalidCollateralFactor();
+    /// @notice `ltv` is above `liquidationThreshold`, or `liquidationThreshold` is above `BASIS_POINTS`.
+    error InvalidRiskParameters();
     /// @notice A market already exists for the token.
     error MarketAlreadyExists();
     /// @notice The market for the token is not active.
     error MarketNotActive();
     /// @notice The caller deposited less than the requested withdrawal.
     error InsufficientDeposit();
-    /// @notice The withdrawal would leave the position below the liquidation threshold.
+    /// @notice The withdrawal would leave the health factor below 1.
     error WithdrawalUnsafe();
     /// @notice The market does not hold enough supply for the borrow.
     error InsufficientLiquidity();
-    /// @notice The borrow would exceed the collateral limit.
+    /// @notice The borrow would exceed the borrowing power given by the LTV of the collateral.
     error BorrowExceedsCollateral();
     /// @notice The user owes less than the requested repayment.
     error InsufficientBorrow();
@@ -92,7 +101,7 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
     error InvalidSignature();
     /// @notice The user owes less than the amount to liquidate.
     error InsufficientBorrowToLiquidate();
-    /// @notice The position is not below the liquidation threshold.
+    /// @notice The health factor of the position is not below 1.
     error NotLiquidatable();
     /// @notice The user has no collateral to seize.
     error NoCollateralToSeize();
@@ -101,9 +110,9 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
 
     // Events
     /// @notice Emitted when a market is added.
-    event MarketAdded(address indexed token, uint256 collateralFactor);
-    /// @notice Emitted when a market collateral factor changes.
-    event MarketUpdated(address indexed token, uint256 collateralFactor);
+    event MarketAdded(address indexed token, uint256 ltv, uint256 liquidationThreshold);
+    /// @notice Emitted when the risk parameters of a market change.
+    event MarketUpdated(address indexed token, uint256 ltv, uint256 liquidationThreshold);
     /// @notice Emitted when `user` deposits `amount` of `token`.
     event Deposit(address indexed user, address indexed token, uint256 amount);
     /// @notice Emitted when `user` withdraws `amount` of `token`.
@@ -144,16 +153,20 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
     /**
      * @notice Add a new market to the protocol
      * @param token The ERC20 token to add
-     * @param collateralFactor The collateral factor for this token (0-10000)
+     * @param ltv Max loan-to-value in basis points: how much can be borrowed against this token as collateral
+     * @param liquidationThreshold Basis points of this token that count for the health factor (>= `ltv`)
      * @param initialSupplyRate Initial supply rate in basis points
      * @param initialBorrowRate Initial borrow rate in basis points
      */
-    function addMarket(address token, uint256 collateralFactor, uint256 initialSupplyRate, uint256 initialBorrowRate)
-        external
-        onlyOwner
-    {
+    function addMarket(
+        address token,
+        uint256 ltv,
+        uint256 liquidationThreshold,
+        uint256 initialSupplyRate,
+        uint256 initialBorrowRate
+    ) external onlyOwner {
         if (token == address(0)) revert ZeroAddress();
-        if (collateralFactor > BASIS_POINTS) revert InvalidCollateralFactor();
+        _checkRiskParameters(ltv, liquidationThreshold);
         if (markets[token].isActive) revert MarketAlreadyExists();
 
         markets[token] = Market({
@@ -162,33 +175,38 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
             totalBorrow: 0,
             supplyRate: initialSupplyRate,
             borrowRate: initialBorrowRate,
-            collateralFactor: collateralFactor,
+            ltv: ltv,
+            liquidationThreshold: liquidationThreshold,
             isActive: true
         });
 
         supportedTokens.push(token);
-        emit MarketAdded(token, collateralFactor);
+        emit MarketAdded(token, ltv, liquidationThreshold);
     }
 
     /**
      * @notice Update market parameters
      * @param token The token address
-     * @param collateralFactor New collateral factor
+     * @param ltv New max loan-to-value in basis points
+     * @param liquidationThreshold New liquidation threshold in basis points (>= `ltv`)
      * @param supplyRate New supply rate
      * @param borrowRate New borrow rate
      */
-    function updateMarket(address token, uint256 collateralFactor, uint256 supplyRate, uint256 borrowRate)
-        external
-        onlyOwner
-        onlyActiveMarket(token)
-    {
-        if (collateralFactor > BASIS_POINTS) revert InvalidCollateralFactor();
+    function updateMarket(
+        address token,
+        uint256 ltv,
+        uint256 liquidationThreshold,
+        uint256 supplyRate,
+        uint256 borrowRate
+    ) external onlyOwner onlyActiveMarket(token) {
+        _checkRiskParameters(ltv, liquidationThreshold);
 
-        markets[token].collateralFactor = collateralFactor;
+        markets[token].ltv = ltv;
+        markets[token].liquidationThreshold = liquidationThreshold;
         markets[token].supplyRate = supplyRate;
         markets[token].borrowRate = borrowRate;
 
-        emit MarketUpdated(token, collateralFactor);
+        emit MarketUpdated(token, ltv, liquidationThreshold);
         emit RatesUpdated(token, supplyRate, borrowRate);
     }
 
@@ -360,123 +378,52 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
     }
 
     /**
-     * @notice Get user's current collateralization ratio
+     * @notice Health factor of a user: collateral weighted by each liquidation threshold, divided by the debt
+     * @dev healthFactor = sum(collateralUsd * liquidationThreshold) / sum(debtUsd), scaled by `WAD`.
+     *      Above `WAD` the position is healthy, below `WAD` it can be liquidated. With no debt it is `type(uint256).max`.
      * @param user The user address
-     * @return ratio The collateralization ratio in basis points
+     * @return The health factor, 1e18 = 1
      */
-    function getCollateralizationRatio(address user) public view returns (uint256 ratio) {
-        uint256 totalCollateralValue = 0;
-        uint256 totalBorrowValue = 0;
-
-        for (uint256 i = 0; i < supportedTokens.length; i++) {
-            address token = supportedTokens[i];
-            if (markets[token].isActive) {
-                uint256 depositAmount = userDeposits[user][token];
-                uint256 borrowAmount = userBorrows[user][token];
-
-                if (depositAmount > 0) {
-                    totalCollateralValue += (_valueInUsd(token, depositAmount) * markets[token].collateralFactor)
-                        / BASIS_POINTS;
-                }
-
-                if (borrowAmount > 0) {
-                    totalBorrowValue += _valueInUsd(token, borrowAmount);
-                }
-            }
-        }
-
-        if (totalBorrowValue == 0) return type(uint256).max;
-        return (totalCollateralValue * BASIS_POINTS) / totalBorrowValue;
+    function getHealthFactor(address user) public view returns (uint256) {
+        Position memory position = _position(user, address(0), 0, 0);
+        if (position.debtUsd == 0) return type(uint256).max;
+        return Math.mulDiv(position.thresholdCollateralUsd, WAD, position.debtUsd);
     }
 
     /**
-     * @notice Check if a user can withdraw without making position unsafe
+     * @notice Check if a user can withdraw without making the position liquidatable
+     * @dev Uses the liquidation threshold: the health factor after the withdrawal must stay at 1 or more.
      * @param user The user address
      * @param token The token to withdraw
      * @param amount The amount to withdraw
-     * @return True if withdrawal is safe
+     * @return True if the withdrawal is safe
      */
     function canWithdraw(address user, address token, uint256 amount) public view returns (bool) {
-        uint256 currentRatio = getCollateralizationRatio(user);
-        if (currentRatio == type(uint256).max) return true;
-
-        // Calculate new ratio after withdrawal
-        uint256 newCollateralValue = 0;
-        uint256 totalBorrowValue = 0;
-
-        for (uint256 i = 0; i < supportedTokens.length; i++) {
-            address supportedToken = supportedTokens[i];
-            if (markets[supportedToken].isActive) {
-                uint256 depositAmount = userDeposits[user][supportedToken];
-                uint256 borrowAmount = userBorrows[user][supportedToken];
-
-                if (supportedToken == token) {
-                    depositAmount = depositAmount > amount ? depositAmount - amount : 0;
-                }
-
-                if (depositAmount > 0) {
-                    newCollateralValue += (_valueInUsd(supportedToken, depositAmount)
-                            * markets[supportedToken].collateralFactor) / BASIS_POINTS;
-                }
-
-                if (borrowAmount > 0) {
-                    totalBorrowValue += _valueInUsd(supportedToken, borrowAmount);
-                }
-            }
-        }
-
-        uint256 newRatio = (newCollateralValue * BASIS_POINTS) / totalBorrowValue;
-        return newRatio >= LIQUIDATION_THRESHOLD;
+        Position memory position = _position(user, token, amount, 0);
+        return position.thresholdCollateralUsd >= position.debtUsd;
     }
 
     /**
      * @notice Check if a user can borrow additional tokens
+     * @dev Uses the LTV: the debt after the borrow must not exceed the borrowing power. There is no special case
+     *      for users without debt, so the first borrow is checked like any other.
      * @param user The user address
      * @param token The token to borrow
      * @param amount The amount to borrow
-     * @return True if borrow is allowed
+     * @return True if the borrow is allowed
      */
     function canBorrow(address user, address token, uint256 amount) public view returns (bool) {
-        uint256 currentRatio = getCollateralizationRatio(user);
-        if (currentRatio == type(uint256).max) return true;
-
-        // Calculate new ratio after borrow
-        uint256 totalCollateralValue = 0;
-        uint256 totalBorrowValue = 0;
-
-        for (uint256 i = 0; i < supportedTokens.length; i++) {
-            address supportedToken = supportedTokens[i];
-            if (markets[supportedToken].isActive) {
-                uint256 depositAmount = userDeposits[user][supportedToken];
-                uint256 borrowAmount = userBorrows[user][supportedToken];
-
-                if (supportedToken == token) {
-                    borrowAmount += amount;
-                }
-
-                if (depositAmount > 0) {
-                    totalCollateralValue += (_valueInUsd(supportedToken, depositAmount)
-                            * markets[supportedToken].collateralFactor) / BASIS_POINTS;
-                }
-
-                if (borrowAmount > 0) {
-                    totalBorrowValue += _valueInUsd(supportedToken, borrowAmount);
-                }
-            }
-        }
-
-        uint256 newRatio = (totalCollateralValue * BASIS_POINTS) / totalBorrowValue;
-        return newRatio >= LIQUIDATION_THRESHOLD;
+        Position memory position = _position(user, token, 0, amount);
+        return position.debtUsd <= position.ltvCollateralUsd;
     }
 
     /**
      * @notice Check if a user's position is liquidatable
      * @param user The user address
-     * @return True if position can be liquidated
+     * @return True if the health factor is below 1
      */
     function isLiquidatable(address user) public view returns (bool) {
-        uint256 ratio = getCollateralizationRatio(user);
-        return ratio < LIQUIDATION_THRESHOLD;
+        return getHealthFactor(user) < WAD;
     }
 
     /**
@@ -492,7 +439,8 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
             address token = supportedTokens[i];
             if (markets[token].isActive && userDeposits[user][token] > 0) {
                 uint256 value =
-                    (_valueInUsd(token, userDeposits[user][token]) * markets[token].collateralFactor) / BASIS_POINTS;
+                    (_valueInUsd(token, userDeposits[user][token], Math.Rounding.Floor)
+                            * markets[token].liquidationThreshold) / BASIS_POINTS;
                 if (value > bestValue) {
                     bestValue = value;
                     bestToken = token;
@@ -504,15 +452,60 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
     }
 
     /**
+     * @notice Value a user position in USD, optionally simulating a pending withdrawal or borrow of one token
+     * @dev Collateral is rounded down and debt is rounded up, always in favour of the protocol.
+     * @param user The user address
+     * @param token The token affected by the simulated operation (ignored when both amounts are 0)
+     * @param withdrawn Amount of `token` that would be withdrawn
+     * @param borrowed Amount of `token` that would be borrowed
+     * @return position The position in USD with 8 decimals
+     */
+    function _position(address user, address token, uint256 withdrawn, uint256 borrowed)
+        internal
+        view
+        returns (Position memory position)
+    {
+        for (uint256 i = 0; i < supportedTokens.length; i++) {
+            address supportedToken = supportedTokens[i];
+            Market storage market = markets[supportedToken];
+            if (!market.isActive) continue;
+
+            uint256 depositAmount = userDeposits[user][supportedToken];
+            uint256 borrowAmount = userBorrows[user][supportedToken];
+
+            if (supportedToken == token) {
+                depositAmount = depositAmount > withdrawn ? depositAmount - withdrawn : 0;
+                borrowAmount += borrowed;
+            }
+
+            if (depositAmount > 0) {
+                uint256 collateralUsd = _valueInUsd(supportedToken, depositAmount, Math.Rounding.Floor);
+                position.ltvCollateralUsd += (collateralUsd * market.ltv) / BASIS_POINTS;
+                position.thresholdCollateralUsd += (collateralUsd * market.liquidationThreshold) / BASIS_POINTS;
+            }
+
+            if (borrowAmount > 0) {
+                position.debtUsd += _valueInUsd(supportedToken, borrowAmount, Math.Rounding.Ceil);
+            }
+        }
+    }
+
+    /**
      * @notice Value of `amount` base units of `token` in USD with 8 decimals
      * @dev valueUsd = amount * price / 10^tokenDecimals. The result has 8 decimals whatever the token decimals are,
      *      so values of different tokens can be added and compared.
      * @param token The token address
      * @param amount The amount in base units
+     * @param rounding Floor for collateral, Ceil for debt
      * @return The USD value, 8 decimals
      */
-    function _valueInUsd(address token, uint256 amount) internal view returns (uint256) {
-        return (amount * oracle.getAssetPrice(token)) / (10 ** IERC20Metadata(token).decimals());
+    function _valueInUsd(address token, uint256 amount, Math.Rounding rounding) internal view returns (uint256) {
+        return Math.mulDiv(amount, oracle.getAssetPrice(token), 10 ** IERC20Metadata(token).decimals(), rounding);
+    }
+
+    /// @dev Reverts unless `ltv <= liquidationThreshold <= BASIS_POINTS`.
+    function _checkRiskParameters(uint256 ltv, uint256 liquidationThreshold) internal pure {
+        if (ltv > liquidationThreshold || liquidationThreshold > BASIS_POINTS) revert InvalidRiskParameters();
     }
 
     /**

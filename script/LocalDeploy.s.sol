@@ -11,7 +11,8 @@ import {MockPriceOracle} from "../test/mocks/MockPriceOracle.sol";
 ///      Anvil's accounts #1 to #3 some tokens.
 contract LocalDeploy is Script {
     uint256 constant TOKENS_PER_ACCOUNT = 100_000 ether;
-    uint256 constant COLLATERAL_FACTOR = 8000;
+    uint256 constant LTV = 7500;
+    uint256 constant LIQUIDATION_THRESHOLD = 8000;
 
     function run() external {
         address[3] memory users = [
@@ -29,8 +30,8 @@ contract LocalDeploy is Script {
         oracle.setPrice(address(usdc), 1e8);
         oracle.setPrice(address(weth), 1e8);
 
-        lending.addMarket(address(usdc), COLLATERAL_FACTOR, 500, 800);
-        lending.addMarket(address(weth), COLLATERAL_FACTOR, 500, 800);
+        lending.addMarket(address(usdc), LTV, LIQUIDATION_THRESHOLD, 500, 800);
+        lending.addMarket(address(weth), LTV, LIQUIDATION_THRESHOLD, 500, 800);
 
         for (uint256 i = 0; i < users.length; i++) {
             usdc.mint(users[i], TOKENS_PER_ACCOUNT);

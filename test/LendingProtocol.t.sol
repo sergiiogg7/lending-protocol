@@ -25,13 +25,14 @@ contract LendingProtocolTest is Test {
     uint256 public constant DEPOSIT_AMOUNT = 100 * 10 ** 18; // Reduced to fit within user balance
     uint256 public constant BORROW_AMOUNT = 50 * 10 ** 18; // Reduced to fit within user balance
     uint256 public constant INITIAL_LIQUIDITY = INITIAL_SUPPLY / 4; // All tokens now use 18 decimals
-    uint256 public constant COLLATERAL_FACTOR = 8000; // 80%
+    uint256 public constant LTV = 7500; // 75%
+    uint256 public constant LIQUIDATION_THRESHOLD = 8000; // 80%
     uint256 public constant SUPPLY_RATE = 500; // 5% APY
     uint256 public constant BORROW_RATE = 800; // 8% APY
 
     // Events
-    event MarketAdded(address indexed token, uint256 collateralFactor);
-    event MarketUpdated(address indexed token, uint256 collateralFactor);
+    event MarketAdded(address indexed token, uint256 ltv, uint256 liquidationThreshold);
+    event MarketUpdated(address indexed token, uint256 ltv, uint256 liquidationThreshold);
     event Deposit(address indexed user, address indexed token, uint256 amount);
     event Withdraw(address indexed user, address indexed token, uint256 amount);
     event Borrow(address indexed user, address indexed token, uint256 amount);
@@ -63,9 +64,9 @@ contract LendingProtocolTest is Test {
 
         // Add markets
         vm.startPrank(owner);
-        lendingProtocol.addMarket(address(usdc), COLLATERAL_FACTOR, SUPPLY_RATE, BORROW_RATE);
-        lendingProtocol.addMarket(address(weth), COLLATERAL_FACTOR, SUPPLY_RATE, BORROW_RATE);
-        lendingProtocol.addMarket(address(dai), COLLATERAL_FACTOR, SUPPLY_RATE, BORROW_RATE);
+        lendingProtocol.addMarket(address(usdc), LTV, LIQUIDATION_THRESHOLD, SUPPLY_RATE, BORROW_RATE);
+        lendingProtocol.addMarket(address(weth), LTV, LIQUIDATION_THRESHOLD, SUPPLY_RATE, BORROW_RATE);
+        lendingProtocol.addMarket(address(dai), LTV, LIQUIDATION_THRESHOLD, SUPPLY_RATE, BORROW_RATE);
         vm.stopPrank();
 
         // Distribute tokens to users
@@ -104,14 +105,15 @@ contract LendingProtocolTest is Test {
 
         vm.startPrank(owner);
         vm.expectEmit(true, false, false, true);
-        emit MarketAdded(address(newToken), 7000);
+        emit MarketAdded(address(newToken), 7000, 7500);
 
-        lendingProtocol.addMarket(address(newToken), 7000, 300, 800);
+        lendingProtocol.addMarket(address(newToken), 7000, 7500, 300, 800);
         vm.stopPrank();
 
         LendingProtocol.Market memory market = lendingProtocol.getMarket(address(newToken));
         assertTrue(market.isActive);
-        assertEq(market.collateralFactor, 7000);
+        assertEq(market.ltv, 7000);
+        assertEq(market.liquidationThreshold, 7500);
         assertEq(market.supplyRate, 300);
         assertEq(market.borrowRate, 800);
     }
@@ -119,47 +121,48 @@ contract LendingProtocolTest is Test {
     function test_RevertWhen_AddMarketInvalidToken() public {
         vm.startPrank(owner);
         vm.expectRevert(LendingProtocol.ZeroAddress.selector);
-        lendingProtocol.addMarket(address(0), COLLATERAL_FACTOR, SUPPLY_RATE, BORROW_RATE);
+        lendingProtocol.addMarket(address(0), LTV, LIQUIDATION_THRESHOLD, SUPPLY_RATE, BORROW_RATE);
         vm.stopPrank();
     }
 
-    function test_RevertWhen_AddMarketInvalidCollateralFactor() public {
+    function test_RevertWhen_AddMarketInvalidRiskParameters() public {
         MockToken newToken = new MockToken("New Token", "NEW", 18, INITIAL_SUPPLY);
 
         vm.startPrank(owner);
-        vm.expectRevert(LendingProtocol.InvalidCollateralFactor.selector);
-        lendingProtocol.addMarket(address(newToken), 11000, SUPPLY_RATE, BORROW_RATE);
+        vm.expectRevert(LendingProtocol.InvalidRiskParameters.selector);
+        lendingProtocol.addMarket(address(newToken), 11000, 11000, SUPPLY_RATE, BORROW_RATE);
         vm.stopPrank();
     }
 
     function test_RevertWhen_AddMarketAlreadyExists() public {
         vm.startPrank(owner);
         vm.expectRevert(LendingProtocol.MarketAlreadyExists.selector);
-        lendingProtocol.addMarket(address(usdc), COLLATERAL_FACTOR, SUPPLY_RATE, BORROW_RATE);
+        lendingProtocol.addMarket(address(usdc), LTV, LIQUIDATION_THRESHOLD, SUPPLY_RATE, BORROW_RATE);
         vm.stopPrank();
     }
 
     function test_UpdateMarket() public {
         vm.startPrank(owner);
         vm.expectEmit(true, false, false, true);
-        emit MarketUpdated(address(usdc), 7000);
+        emit MarketUpdated(address(usdc), 7000, 7500);
 
         vm.expectEmit(true, false, false, true);
         emit RatesUpdated(address(usdc), 400, 900);
 
-        lendingProtocol.updateMarket(address(usdc), 7000, 400, 900);
+        lendingProtocol.updateMarket(address(usdc), 7000, 7500, 400, 900);
         vm.stopPrank();
 
         LendingProtocol.Market memory market = lendingProtocol.getMarket(address(usdc));
-        assertEq(market.collateralFactor, 7000);
+        assertEq(market.ltv, 7000);
+        assertEq(market.liquidationThreshold, 7500);
         assertEq(market.supplyRate, 400);
         assertEq(market.borrowRate, 900);
     }
 
-    function test_RevertWhen_UpdateMarketInvalidCollateralFactor() public {
+    function test_RevertWhen_UpdateMarketInvalidRiskParameters() public {
         vm.startPrank(owner);
-        vm.expectRevert(LendingProtocol.InvalidCollateralFactor.selector);
-        lendingProtocol.updateMarket(address(usdc), 11000, SUPPLY_RATE, BORROW_RATE);
+        vm.expectRevert(LendingProtocol.InvalidRiskParameters.selector);
+        lendingProtocol.updateMarket(address(usdc), 11000, 11000, SUPPLY_RATE, BORROW_RATE);
         vm.stopPrank();
     }
 
@@ -168,7 +171,7 @@ contract LendingProtocolTest is Test {
 
         vm.startPrank(owner);
         vm.expectRevert(LendingProtocol.MarketNotActive.selector);
-        lendingProtocol.updateMarket(address(newToken), 7000, SUPPLY_RATE, BORROW_RATE);
+        lendingProtocol.updateMarket(address(newToken), 7000, 7500, SUPPLY_RATE, BORROW_RATE);
         vm.stopPrank();
     }
 
@@ -491,9 +494,9 @@ contract LendingProtocolTest is Test {
 
     // ============ VIEW FUNCTION TESTS ============
 
-    function test_GetCollateralizationRatio() public {
+    function test_GetHealthFactor() public {
         // User with no borrows should return max value
-        assertEq(lendingProtocol.getCollateralizationRatio(user1), type(uint256).max);
+        assertEq(lendingProtocol.getHealthFactor(user1), type(uint256).max);
 
         // User with deposits and borrows
         vm.startPrank(user1);
@@ -502,7 +505,7 @@ contract LendingProtocolTest is Test {
         lendingProtocol.borrow(address(dai), BORROW_AMOUNT);
         vm.stopPrank();
 
-        uint256 ratio = lendingProtocol.getCollateralizationRatio(user1);
+        uint256 ratio = lendingProtocol.getHealthFactor(user1);
         assertGt(ratio, 0);
     }
 
@@ -527,7 +530,8 @@ contract LendingProtocolTest is Test {
     function test_GetMarket() public {
         LendingProtocol.Market memory market = lendingProtocol.getMarket(address(usdc));
         assertTrue(market.isActive);
-        assertEq(market.collateralFactor, COLLATERAL_FACTOR);
+        assertEq(market.ltv, LTV);
+        assertEq(market.liquidationThreshold, LIQUIDATION_THRESHOLD);
         assertEq(market.supplyRate, SUPPLY_RATE);
         assertEq(market.borrowRate, BORROW_RATE);
         assertEq(market.totalSupply, INITIAL_LIQUIDITY);
@@ -697,8 +701,8 @@ contract LendingProtocolTest is Test {
 
         // Make position liquidatable
         vm.startPrank(owner);
-        lendingProtocol.updateMarket(address(usdc), 3000, SUPPLY_RATE, BORROW_RATE);
-        lendingProtocol.updateMarket(address(weth), 3000, SUPPLY_RATE, BORROW_RATE);
+        lendingProtocol.updateMarket(address(usdc), 3000, 3000, SUPPLY_RATE, BORROW_RATE);
+        lendingProtocol.updateMarket(address(weth), 3000, 3000, SUPPLY_RATE, BORROW_RATE);
         vm.stopPrank();
 
         // Liquidate - this will call findBestCollateral internally
@@ -763,11 +767,11 @@ contract LendingProtocolTest is Test {
         vm.stopPrank();
     }
 
-    function test_CollateralizationRatioEdgeCases() public {
+    function test_HealthFactorEdgeCases() public {
         // Test collateralization ratio edge cases
 
         // User with no deposits or borrows
-        assertEq(lendingProtocol.getCollateralizationRatio(user3), type(uint256).max);
+        assertEq(lendingProtocol.getHealthFactor(user3), type(uint256).max);
 
         // User with only deposits
         vm.startPrank(user3);
@@ -775,14 +779,14 @@ contract LendingProtocolTest is Test {
         lendingProtocol.deposit(address(usdc), DEPOSIT_AMOUNT);
         vm.stopPrank();
 
-        assertEq(lendingProtocol.getCollateralizationRatio(user3), type(uint256).max);
+        assertEq(lendingProtocol.getHealthFactor(user3), type(uint256).max);
 
         // User with deposits and borrows
         vm.startPrank(user3);
         lendingProtocol.borrow(address(dai), BORROW_AMOUNT);
         vm.stopPrank();
 
-        uint256 ratio = lendingProtocol.getCollateralizationRatio(user3);
+        uint256 ratio = lendingProtocol.getHealthFactor(user3);
         assertGt(ratio, 0);
         assertLt(ratio, type(uint256).max);
     }

@@ -27,8 +27,8 @@ contract LendingProtocolFuzzTest is Test {
         oracle.setPrice(address(usdc), 1e8);
         oracle.setPrice(address(weth), 1e8);
         vm.startPrank(owner);
-        lending.addMarket(address(usdc), 8000, 500, 800);
-        lending.addMarket(address(weth), 8000, 500, 800);
+        lending.addMarket(address(usdc), 7500, 8000, 500, 800);
+        lending.addMarket(address(weth), 7500, 8000, 500, 800);
         vm.stopPrank();
 
         address[2] memory actors = [lp, user];
@@ -60,7 +60,7 @@ contract LendingProtocolFuzzTest is Test {
 
     function testFuzz_BorrowRepayRoundTrip(uint256 collateral, uint256 borrowAmount) public {
         collateral = bound(collateral, 1 ether, MAX);
-        borrowAmount = bound(borrowAmount, 1, collateral);
+        borrowAmount = bound(borrowAmount, 1, (collateral * 7000) / 10_000); // below the 75 % LTV
         vm.startPrank(user);
         lending.deposit(address(usdc), collateral);
         lending.borrow(address(weth), borrowAmount);
@@ -77,10 +77,6 @@ contract LendingProtocolFuzzTest is Test {
         borrowAmount = bound(borrowAmount, 1, MAX);
         vm.startPrank(user);
         lending.deposit(address(usdc), collateral);
-        // Known issue (see SECURITY.md): the very first borrow of a user skips the collateral check,
-        // so the property is only checked from the second borrow on. The first borrow must be worth at least
-        // 1 USD unit: dust (e.g. 1 wei) is valued at 0 after rounding, which would keep the shortcut active.
-        lending.borrow(address(weth), 1 ether);
         try lending.borrow(address(weth), borrowAmount) {
             assertFalse(lending.isLiquidatable(user));
         } catch {}
@@ -91,7 +87,7 @@ contract LendingProtocolFuzzTest is Test {
         public
     {
         collateral = bound(collateral, 1 ether, MAX);
-        borrowAmount = bound(borrowAmount, 1, collateral);
+        borrowAmount = bound(borrowAmount, 1, (collateral * 7000) / 10_000); // below the 75 % LTV
         out = bound(out, 1, collateral);
         vm.startPrank(user);
         lending.deposit(address(usdc), collateral);
@@ -102,12 +98,12 @@ contract LendingProtocolFuzzTest is Test {
         vm.stopPrank();
     }
 
-    function testFuzz_AddMarketRejectsCollateralFactorAboveMax(uint256 factor) public {
+    function testFuzz_AddMarketRejectsThresholdAboveMax(uint256 factor) public {
         factor = bound(factor, 10_001, type(uint256).max);
         MockToken token = new MockToken("T", "T", 18, 0);
         vm.prank(owner);
-        vm.expectRevert(LendingProtocol.InvalidCollateralFactor.selector);
-        lending.addMarket(address(token), factor, 0, 0);
+        vm.expectRevert(LendingProtocol.InvalidRiskParameters.selector);
+        lending.addMarket(address(token), 0, factor, 0, 0);
     }
 
     function testFuzz_RevertWhen_WithdrawMoreThanDeposited(uint256 deposited, uint256 extra) public {

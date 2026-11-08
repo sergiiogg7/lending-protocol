@@ -6,61 +6,61 @@ import {LendingProtocol} from "../src/LendingProtocol.sol";
 import {MockToken} from "./mocks/MockToken.sol";
 import {MockPriceOracle} from "./mocks/MockPriceOracle.sol";
 
-/// @notice Values of tokens with different prices and decimals must be comparable (USD, 8 decimals).
+/// @notice How the protocol uses its price oracle. The risk model itself is tested in `LendingProtocolRisk.t.sol`.
 contract LendingProtocolOracleTest is Test {
     LendingProtocol public lending;
     MockPriceOracle public oracle;
-    MockToken public usdc; // 6 decimals, 1 USD
-    MockToken public weth; // 18 decimals, 2000 USD
+    MockToken public weth;
 
     address public owner = makeAddr("owner");
-    address public lender = makeAddr("lender");
-    address public borrower = makeAddr("borrower");
-
-    uint256 constant COLLATERAL_FACTOR = 8000;
+    address public user = makeAddr("user");
 
     function setUp() public {
         oracle = new MockPriceOracle();
-        usdc = new MockToken("USD Coin", "USDC", 6, 0);
         weth = new MockToken("Wrapped Ether", "WETH", 18, 0);
-        oracle.setPrice(address(usdc), 1e8);
         oracle.setPrice(address(weth), 2000e8);
 
         vm.startPrank(owner);
         lending = new LendingProtocol(address(oracle));
-        lending.addMarket(address(usdc), COLLATERAL_FACTOR, 0, 0);
-        lending.addMarket(address(weth), COLLATERAL_FACTOR, 0, 0);
+        lending.addMarket(address(weth), 7500, 8000, 0, 0);
         vm.stopPrank();
 
-        usdc.mint(lender, 5000e6);
-        weth.mint(borrower, 1 ether);
-
-        vm.startPrank(lender);
-        usdc.approve(address(lending), type(uint256).max);
-        lending.deposit(address(usdc), 5000e6);
-        vm.stopPrank();
-
-        vm.startPrank(borrower);
+        weth.mint(user, 1 ether);
+        vm.startPrank(user);
         weth.approve(address(lending), type(uint256).max);
-        usdc.approve(address(lending), type(uint256).max);
         lending.deposit(address(weth), 1 ether);
         vm.stopPrank();
     }
 
-    function test_RatioComparesValuesInUsdAcrossDecimals() public {
-        vm.prank(borrower);
-        lending.borrow(address(usdc), 1000e6);
-
-        // collateral: 1 WETH * 2000 USD * 80% = 1600 USD; debt: 1000 USD => 16000 bps
-        assertEq(lending.getCollateralizationRatio(borrower), 16_000);
+    function test_OracleIsSetInConstructor() public view {
+        assertEq(address(lending.oracle()), address(oracle));
     }
 
-    function test_BorrowLimitIsExpressedInUsd() public {
-        vm.startPrank(borrower);
-        lending.borrow(address(usdc), 1000e6); // first borrow (skips the check, known bug #1)
-        lending.borrow(address(usdc), 1000e6); // 2000 USD of debt: ratio exactly at 80%
-        vm.expectRevert(LendingProtocol.BorrowExceedsCollateral.selector);
-        lending.borrow(address(usdc), 1); // anything above the limit
+    function test_RevertWhen_OracleIsZeroAddress() public {
+        vm.expectRevert(LendingProtocol.ZeroAddress.selector);
+        new LendingProtocol(address(0));
+    }
+
+    function test_RevertWhen_TokenInPositionHasNoPrice() public {
+        MockToken dai = new MockToken("Dai", "DAI", 18, 0); // listed as a market but the oracle has no price for it
+        vm.prank(owner);
+        lending.addMarket(address(dai), 7500, 8000, 0, 0);
+        dai.mint(user, 1 ether);
+
+        vm.startPrank(user);
+        dai.approve(address(lending), type(uint256).max);
+        lending.deposit(address(dai), 1 ether);
+        vm.expectRevert(abi.encodeWithSelector(MockPriceOracle.PriceNotSet.selector, address(dai)));
+        lending.getHealthFactor(user);
         vm.stopPrank();
+    }
+
+    function test_PositionWithoutAssetInMarketDoesNotNeedItsPrice() public {
+        MockToken dai = new MockToken("Dai", "DAI", 18, 0);
+        vm.prank(owner);
+        lending.addMarket(address(dai), 7500, 8000, 0, 0);
+
+        // the user holds no DAI, so the missing DAI price is never queried
+        assertEq(lending.getHealthFactor(user), type(uint256).max);
     }
 }

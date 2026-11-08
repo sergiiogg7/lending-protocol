@@ -93,8 +93,8 @@ contract InvHandler is Test {
     function crashCollateralFactor(uint256 factor) external {
         factor = bound(factor, 0, 8000);
         vm.startPrank(owner);
-        lending.updateMarket(address(usdc), factor, 0, 0);
-        lending.updateMarket(address(weth), factor, 0, 0);
+        lending.updateMarket(address(usdc), factor, factor, 0, 0);
+        lending.updateMarket(address(weth), factor, factor, 0, 0);
         vm.stopPrank();
     }
 
@@ -139,8 +139,8 @@ contract LendingProtocolInvariantTest is StdInvariant, Test {
         oracle.setPrice(address(usdc), 1e8);
         oracle.setPrice(address(weth), 1e8);
         vm.startPrank(owner);
-        lending.addMarket(address(usdc), 8000, 500, 800);
-        lending.addMarket(address(weth), 8000, 500, 800);
+        lending.addMarket(address(usdc), 7500, 8000, 500, 800);
+        lending.addMarket(address(weth), 7500, 8000, 500, 800);
         vm.stopPrank();
 
         for (uint256 i = 0; i < 4; i++) {

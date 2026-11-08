@@ -7,7 +7,7 @@ A minimal lending and borrowing protocol on Ethereum, built with Foundry. Users 
 ![Foundry](https://img.shields.io/badge/Built%20with-Foundry-orange)
 ![Tests 72](https://img.shields.io/badge/tests-72%20passing-brightgreen)
 
-> **Not audited and not safe for real funds.** The logic has known vulnerabilities (an unchecked first borrow, mixed-up collateral factor and liquidation threshold, no interest accrual and more) that are listed in [SECURITY.md](SECURITY.md) and will be fixed in a later phase.
+> **Not audited and not safe for real funds.** The logic has known vulnerabilities (a flawed liquidation, no interest accrual and more) that are listed in [SECURITY.md](SECURITY.md) and will be fixed in a later phase.
 
 ## How it works
 
@@ -17,13 +17,13 @@ One contract, `LendingProtocol`, holds every market.
 |---|---|---|
 | Add / configure a token market | `addMarket`, `updateMarket` | Owner |
 | Supply tokens | `deposit`, `depositWithSignature` | Anyone |
-| Take tokens out | `withdraw` (only if the position stays above the liquidation threshold) | Depositor |
-| Borrow | `borrow` (needs liquidity and collateral) | Anyone |
+| Take tokens out | `withdraw` (only if the health factor stays at 1 or more) | Depositor |
+| Borrow | `borrow` (needs liquidity and enough collateral for the LTV) | Anyone |
 | Repay | `repay` | Borrower |
 | Liquidate an unhealthy position | `liquidate` (liquidator repays debt and seizes collateral plus a 5 % penalty) | Anyone |
 | Emergency controls | `pause`, `unpause`, `emergencyRecover` | Owner |
 
-Key numbers: collateral factor per market (basis points, max 10 000), liquidation threshold 80 %, liquidation penalty 5 %. `withdraw` and `repay` keep working while the protocol is paused.
+Key numbers: per market, `ltv` (what you can borrow against the collateral) and `liquidationThreshold` (when you are liquidated), in basis points with `ltv <= liquidationThreshold <= 10 000`; liquidation penalty 5 %. A position is healthy while its health factor, `sum(collateral usd * threshold) / sum(debt usd)`, is at least 1. `withdraw` and `repay` keep working while the protocol is paused.
 
 ## Usage example
 
