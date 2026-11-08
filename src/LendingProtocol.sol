@@ -60,6 +60,12 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
         uint256 debtUsd; // sum(debt)
     }
 
+    /// @dev A proposed decrease of the liquidation threshold of a market, waiting for its delay.
+    struct PendingThreshold {
+        uint256 threshold; // The proposed liquidation threshold
+        uint256 executableAt; // Timestamp from which it can be executed; 0 when nothing is pending
+    }
+
     struct SignatureData {
         uint256 nonce; // Unique nonce for signature
         uint256 deadline; // Signature expiration time
@@ -71,6 +77,7 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
     mapping(address => mapping(address => uint256)) internal scaledBorrows; // user => token => scaled amount
     mapping(address => MarketState) internal markets;
     mapping(address => uint256) public userNonces;
+    mapping(address => PendingThreshold) internal pendingThresholds; // token => proposed threshold decrease
 
     /// @notice Price source: USD per whole token, 8 decimals. Immutable on purpose.
     IPriceOracle public immutable oracle;
@@ -88,6 +95,7 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
     uint256 public constant WAD = 1e18; // scale of the health factor, rates and utilization: 1e18 means 1
     uint256 public constant RAY = 1e27; // scale of the interest indexes: 27 decimals keep rounding errors negligible
     uint256 public constant SECONDS_PER_YEAR = 365 days;
+    uint256 public constant THRESHOLD_DECREASE_DELAY = 2 days; // notice before a lower liquidation threshold applies
 
     // Errors
     /// @notice A required address argument is the zero address.
@@ -124,12 +132,20 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
     error InsufficientCollateral();
     /// @notice The amount to recover is more than the contract holds beyond what it owes to depositors.
     error AmountExceedsSurplus();
+    /// @notice There is no proposed liquidation threshold decrease for the market.
+    error NoPendingChange();
+    /// @notice The delay of the proposed liquidation threshold decrease has not passed yet.
+    error ChangeNotReady();
 
     // Events
     /// @notice Emitted when a market is added.
     event MarketAdded(address indexed token, uint256 ltv, uint256 liquidationThreshold);
     /// @notice Emitted when the risk parameters of a market change.
     event MarketUpdated(address indexed token, uint256 ltv, uint256 liquidationThreshold);
+    /// @notice Emitted when a decrease of the liquidation threshold is proposed; it can be executed from `executableAt`.
+    event LiquidationThresholdDecreaseProposed(address indexed token, uint256 newThreshold, uint256 executableAt);
+    /// @notice Emitted when a proposed decrease of the liquidation threshold is cancelled.
+    event LiquidationThresholdDecreaseCancelled(address indexed token);
     /// @notice Emitted when `user` deposits `amount` of `token`.
     event Deposit(address indexed user, address indexed token, uint256 amount);
     /// @notice Emitted when `user` withdraws `amount` of `token`.
@@ -200,22 +216,86 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
     }
 
     /**
-     * @notice Update market parameters
+     * @notice Change the max loan-to-value of a market. Takes effect immediately.
+     * @dev The LTV only limits NEW borrows: it never makes an existing position liquidatable, so it needs no delay.
+     *      Setting it to 0 is the emergency lever to stop borrowing against a collateral.
      * @param token The token address
-     * @param ltv New max loan-to-value in basis points
-     * @param liquidationThreshold New liquidation threshold in basis points (>= `ltv`)
+     * @param ltv New max loan-to-value in basis points (<= the liquidation threshold)
      */
-    function updateMarket(address token, uint256 ltv, uint256 liquidationThreshold)
+    function setLtv(address token, uint256 ltv) external onlyOwner onlyActiveMarket(token) {
+        uint256 liquidationThreshold = markets[token].liquidationThreshold;
+        _checkRiskParameters(ltv, liquidationThreshold);
+
+        markets[token].ltv = ltv;
+        emit MarketUpdated(token, ltv, liquidationThreshold);
+    }
+
+    /**
+     * @notice Raise the liquidation threshold of a market. Takes effect immediately.
+     * @dev A higher threshold only makes positions safer, so it needs no delay.
+     * @param token The token address
+     * @param liquidationThreshold New liquidation threshold in basis points (>= the current one)
+     */
+    function raiseLiquidationThreshold(address token, uint256 liquidationThreshold)
         external
         onlyOwner
         onlyActiveMarket(token)
     {
+        uint256 ltv = markets[token].ltv;
+        if (liquidationThreshold < markets[token].liquidationThreshold) revert InvalidRiskParameters();
         _checkRiskParameters(ltv, liquidationThreshold);
 
-        markets[token].ltv = ltv;
         markets[token].liquidationThreshold = liquidationThreshold;
-
         emit MarketUpdated(token, ltv, liquidationThreshold);
+    }
+
+    /**
+     * @notice Propose a lower liquidation threshold. It can be executed after `THRESHOLD_DECREASE_DELAY`.
+     * @dev A lower threshold can make existing positions liquidatable, so users get two days of notice to repay or
+     *      add collateral. A new proposal replaces the pending one and restarts the delay.
+     * @param token The token address
+     * @param newThreshold The proposed threshold in basis points (lower than the current one, >= the LTV)
+     */
+    function proposeLiquidationThresholdDecrease(address token, uint256 newThreshold)
+        external
+        onlyOwner
+        onlyActiveMarket(token)
+    {
+        if (newThreshold >= markets[token].liquidationThreshold) revert InvalidRiskParameters();
+        _checkRiskParameters(markets[token].ltv, newThreshold);
+
+        uint256 executableAt = block.timestamp + THRESHOLD_DECREASE_DELAY;
+        pendingThresholds[token] = PendingThreshold({threshold: newThreshold, executableAt: executableAt});
+        emit LiquidationThresholdDecreaseProposed(token, newThreshold, executableAt);
+    }
+
+    /**
+     * @notice Apply the proposed liquidation threshold decrease once its delay has passed
+     * @dev The parameters are checked again, since the LTV may have changed since the proposal.
+     * @param token The token address
+     */
+    function executeLiquidationThresholdDecrease(address token) external onlyOwner {
+        PendingThreshold memory pending = pendingThresholds[token];
+        if (pending.executableAt == 0) revert NoPendingChange();
+        if (block.timestamp < pending.executableAt) revert ChangeNotReady();
+
+        uint256 ltv = markets[token].ltv;
+        _checkRiskParameters(ltv, pending.threshold);
+
+        delete pendingThresholds[token];
+        markets[token].liquidationThreshold = pending.threshold;
+        emit MarketUpdated(token, ltv, pending.threshold);
+    }
+
+    /**
+     * @notice Cancel the proposed liquidation threshold decrease
+     * @param token The token address
+     */
+    function cancelLiquidationThresholdDecrease(address token) external onlyOwner {
+        if (pendingThresholds[token].executableAt == 0) revert NoPendingChange();
+
+        delete pendingThresholds[token];
+        emit LiquidationThresholdDecreaseCancelled(token);
     }
 
     /**
@@ -693,6 +773,21 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
      */
     function getUserBorrow(address user, address token) external view returns (uint256) {
         return _userBorrow(user, token);
+    }
+
+    /**
+     * @notice The proposed liquidation threshold decrease of a market, if any
+     * @param token The token address
+     * @return threshold The proposed threshold (0 when nothing is pending)
+     * @return executableAt When it can be executed (0 when nothing is pending)
+     */
+    function getPendingLiquidationThreshold(address token)
+        external
+        view
+        returns (uint256 threshold, uint256 executableAt)
+    {
+        PendingThreshold memory pending = pendingThresholds[token];
+        return (pending.threshold, pending.executableAt);
     }
 
     /**

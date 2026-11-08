@@ -18,6 +18,7 @@ contract LendingProtocolFlowsTest is Test {
     LendingProtocol internal lending;
     MockToken internal usdc;
     MockToken internal weth;
+    MockPriceOracle internal oracle;
 
     address internal owner = makeAddr("owner");
     address internal lp = makeAddr("lp");
@@ -29,7 +30,7 @@ contract LendingProtocolFlowsTest is Test {
 
     function setUp() public {
         signer = vm.addr(signerKey);
-        MockPriceOracle oracle = new MockPriceOracle();
+        oracle = new MockPriceOracle();
         vm.prank(owner);
         lending = new LendingProtocol(address(oracle));
         usdc = new MockToken("USD Coin", "USDC", 18, 0);
@@ -134,16 +135,16 @@ contract LendingProtocolFlowsTest is Test {
         lending.borrow(address(weth), 50 ether);
         vm.stopPrank();
 
-        vm.prank(owner);
-        lending.updateMarket(address(usdc), 3000, 3000); // collateral counted 30 < debt 50
+        oracle.setPrice(address(usdc), 0.5e8); // collateral counted 100 * 0.5 * 80 % = 40 < debt 50
         assertTrue(lending.isLiquidatable(signer));
 
         vm.prank(liquidator);
         lending.liquidate(address(usdc), address(weth), signer, 10 ether);
 
         assertEq(lending.getUserBorrow(signer, address(weth)), 40 ether);
-        assertEq(lending.getUserDeposit(signer, address(usdc)), AMOUNT - 10.5 ether);
-        assertEq(usdc.balanceOf(liquidator), 1000 ether + 10.5 ether);
+        // 10 WETH repaid * 1.05 / 0.5 = 21 USDC seized
+        assertEq(lending.getUserDeposit(signer, address(usdc)), AMOUNT - 21 ether);
+        assertEq(usdc.balanceOf(liquidator), 1000 ether + 21 ether);
     }
 
     function test_RevertWhen_LiquidateCollateralTokenNotDeposited() public {
@@ -152,9 +153,8 @@ contract LendingProtocolFlowsTest is Test {
         lending.borrow(address(weth), 50 ether);
         vm.stopPrank();
 
-        // threshold 0 makes the position liquidatable; the signer holds no WETH to seize
-        vm.prank(owner);
-        lending.updateMarket(address(usdc), 0, 0);
+        // a falling USDC price makes the position liquidatable; the signer holds no WETH to seize
+        oracle.setPrice(address(usdc), 0.1e8);
 
         vm.prank(liquidator);
         vm.expectRevert(LendingProtocol.InsufficientCollateral.selector);
@@ -168,12 +168,10 @@ contract LendingProtocolFlowsTest is Test {
         lending.borrow(address(weth), 128 ether);
         vm.stopPrank();
 
-        vm.startPrank(owner);
-        lending.updateMarket(address(usdc), 5000, 5000);
-        lending.updateMarket(address(weth), 5000, 5000);
-        vm.stopPrank();
+        // USDC at 0.5: (100 * 0.5 + 100) * 80 % = 120 < 128 of debt, health factor 0.94
+        oracle.setPrice(address(usdc), 0.5e8);
 
-        // repaying 100 requires seizing 100 * 105% = 105 USDC, but the signer only holds 100
+        // repaying 100 requires seizing 100 * 1.05 / 0.5 = 210 USDC, but the signer only holds 100
         vm.prank(liquidator);
         vm.expectRevert(LendingProtocol.InsufficientCollateral.selector);
         lending.liquidate(address(usdc), address(weth), signer, AMOUNT);

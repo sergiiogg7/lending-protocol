@@ -5,9 +5,9 @@ A minimal lending and borrowing protocol on Ethereum, built with Foundry and mod
 ![CI](https://github.com/sergiiogg7/lending-protocol/actions/workflows/test.yml/badge.svg)
 ![Solidity 0.8.24](https://img.shields.io/badge/Solidity-0.8.24-blue)
 ![Foundry](https://img.shields.io/badge/Built%20with-Foundry-orange)
-![Tests 131](https://img.shields.io/badge/tests-131%20passing-brightgreen)
+![Tests 146](https://img.shields.io/badge/tests-146%20passing-brightgreen)
 
-> **Not audited and not safe for real funds.** Several issues are still open (owner powers, token validation, a signed deposit with no real purpose) and are listed in [SECURITY.md](SECURITY.md).
+> **Not audited and not safe for real funds.** A few issues are still open (token validation, unbounded market loops, a signed deposit with no real purpose) and are listed in [SECURITY.md](SECURITY.md).
 
 ## How it works
 
@@ -15,7 +15,8 @@ One contract, `LendingProtocol`, holds every market. Every token is valued in US
 
 | Action | Function | Who |
 |---|---|---|
-| Add / configure a token market | `addMarket`, `updateMarket` | Owner |
+| Add a token market | `addMarket` | Owner |
+| Change risk parameters | `setLtv` and `raiseLiquidationThreshold` take effect at once; lowering the liquidation threshold needs `proposeLiquidationThresholdDecrease`, two days and `executeLiquidationThresholdDecrease` | Owner |
 | Supply tokens and earn interest | `deposit`, `depositWithSignature` | Anyone |
 | Take tokens out | `withdraw` (only if the health factor stays at 1 or more and the market has the cash; `type(uint256).max` withdraws everything) | Depositor |
 | Borrow | `borrow` (needs available liquidity and enough collateral for the LTV) | Anyone |
@@ -65,7 +66,7 @@ forge test -vvv
 forge coverage --no-match-coverage "script|test"
 ```
 
-131 tests: unit, fuzz and invariants (market totals match user balances, the contract holds the cash that backs supplied minus borrowed, indexes only grow), 100 % line coverage on `src/`. The risk model, liquidation, rates and interest each have their own suite and an end-to-end scenario with exact numbers. Dependencies: OpenZeppelin Contracts v5.4.0 and forge-std (git submodules).
+146 tests: unit, fuzz and invariants (market totals match user balances, the contract holds the cash that backs supplied minus borrowed, indexes only grow), 100 % line coverage on `src/`. The risk model, liquidation, rates and interest each have their own suite and an end-to-end scenario with exact numbers. Dependencies: OpenZeppelin Contracts v5.4.0 and forge-std (git submodules).
 
 ## Local deployment
 

@@ -12,14 +12,20 @@ contract InvHandler is Test {
     LendingProtocol public lending;
     MockToken public usdc;
     MockToken public weth;
-    address public owner;
+    MockPriceOracle public oracle;
     address[] public actors;
 
-    constructor(LendingProtocol _lending, MockToken _usdc, MockToken _weth, address _owner, address[] memory _actors) {
+    constructor(
+        LendingProtocol _lending,
+        MockToken _usdc,
+        MockToken _weth,
+        MockPriceOracle _oracle,
+        address[] memory _actors
+    ) {
         lending = _lending;
         usdc = _usdc;
         weth = _weth;
-        owner = _owner;
+        oracle = _oracle;
         actors = _actors;
     }
 
@@ -90,13 +96,10 @@ contract InvHandler is Test {
         skip(bound(secondsToSkip, 1, 90 days));
     }
 
-    /// @dev Lowers the thresholds so that some positions become liquidatable.
-    function crashThresholds(uint256 factor) external {
-        factor = bound(factor, 0, 8000);
-        vm.startPrank(owner);
-        lending.updateMarket(address(usdc), factor, factor);
-        lending.updateMarket(address(weth), factor, factor);
-        vm.stopPrank();
+    /// @dev Moves a price (between 20 % and 100 % of 1 USD) so that some positions become liquidatable.
+    function movePrice(uint256 tokenSeed, uint256 priceBps) external {
+        priceBps = bound(priceBps, 2000, 10_000);
+        oracle.setPrice(address(_token(tokenSeed)), (1e8 * priceBps) / 10_000);
     }
 
     function actorCount() external view returns (uint256) {
@@ -140,7 +143,7 @@ contract LendingProtocolInvariantTest is StdInvariant, Test {
             vm.stopPrank();
         }
 
-        handler = new InvHandler(lending, usdc, weth, owner, actors);
+        handler = new InvHandler(lending, usdc, weth, oracle, actors);
         targetContract(address(handler));
     }
 

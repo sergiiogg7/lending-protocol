@@ -143,32 +143,32 @@ contract LendingProtocolTest is Test {
         vm.stopPrank();
     }
 
-    function test_UpdateMarket() public {
+    function test_SetLtv() public {
         vm.startPrank(owner);
         vm.expectEmit(true, false, false, true);
-        emit MarketUpdated(address(usdc), 7000, 7500);
+        emit MarketUpdated(address(usdc), 7000, LIQUIDATION_THRESHOLD);
 
-        lendingProtocol.updateMarket(address(usdc), 7000, 7500);
+        lendingProtocol.setLtv(address(usdc), 7000);
         vm.stopPrank();
 
         LendingProtocol.Market memory market = lendingProtocol.getMarket(address(usdc));
         assertEq(market.ltv, 7000);
-        assertEq(market.liquidationThreshold, 7500);
+        assertEq(market.liquidationThreshold, LIQUIDATION_THRESHOLD);
     }
 
-    function test_RevertWhen_UpdateMarketInvalidRiskParameters() public {
+    function test_RevertWhen_SetLtvInvalidRiskParameters() public {
         vm.startPrank(owner);
         vm.expectRevert(LendingProtocol.InvalidRiskParameters.selector);
-        lendingProtocol.updateMarket(address(usdc), 11000, 11000);
+        lendingProtocol.setLtv(address(usdc), 11000);
         vm.stopPrank();
     }
 
-    function test_RevertWhen_UpdateMarketInactiveMarket() public {
+    function test_RevertWhen_SetLtvInactiveMarket() public {
         MockToken newToken = new MockToken("New Token", "NEW", 18, INITIAL_SUPPLY);
 
         vm.startPrank(owner);
         vm.expectRevert(LendingProtocol.MarketNotActive.selector);
-        lendingProtocol.updateMarket(address(newToken), 7000, 7500);
+        lendingProtocol.setLtv(address(newToken), 7000);
         vm.stopPrank();
     }
 
@@ -672,11 +672,9 @@ contract LendingProtocolTest is Test {
         lendingProtocol.borrow(address(dai), BORROW_AMOUNT * 2);
         vm.stopPrank();
 
-        // Make position liquidatable
-        vm.startPrank(owner);
-        lendingProtocol.updateMarket(address(usdc), 3000, 3000);
-        lendingProtocol.updateMarket(address(weth), 3000, 3000);
-        vm.stopPrank();
+        // Make the position liquidatable: collateral falls to 0.6 USD, so 200 * 0.6 * 80 % = 96 < 100 of debt
+        oracle.setPrice(address(usdc), 0.6e8);
+        oracle.setPrice(address(weth), 0.6e8);
 
         // Liquidate, seizing USDC
         vm.startPrank(liquidator);
@@ -684,8 +682,8 @@ contract LendingProtocolTest is Test {
         lendingProtocol.liquidate(address(usdc), address(dai), user1, BORROW_AMOUNT);
         vm.stopPrank();
 
-        // Only the chosen collateral was seized: 50 DAI repaid * 1.05
-        assertEq(lendingProtocol.getUserDeposit(user1, address(usdc)), DEPOSIT_AMOUNT - (BORROW_AMOUNT * 105) / 100);
+        // Only the chosen collateral was seized: 50 DAI repaid * 1.05 / 0.6 = 87.5 USDC
+        assertEq(lendingProtocol.getUserDeposit(user1, address(usdc)), DEPOSIT_AMOUNT - 87.5 ether);
         assertEq(lendingProtocol.getUserDeposit(user1, address(weth)), DEPOSIT_AMOUNT);
     }
 

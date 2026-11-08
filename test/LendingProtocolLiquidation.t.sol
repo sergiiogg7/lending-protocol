@@ -186,9 +186,9 @@ contract LendingProtocolLiquidationTest is Test {
     function test_RevertWhen_ThresholdTimesBonusExceedsOneHundredPercent() public {
         // 95.23 % * 1.05 = 99.99 % is accepted, 95.24 % * 1.05 = 100.002 % is not
         vm.startPrank(owner);
-        lending.updateMarket(address(weth), 7500, 9523);
+        lending.raiseLiquidationThreshold(address(weth), 9523);
         vm.expectRevert(LendingProtocol.InvalidRiskParameters.selector);
-        lending.updateMarket(address(weth), 7500, 9524);
+        lending.raiseLiquidationThreshold(address(weth), 9524);
         vm.stopPrank();
     }
 

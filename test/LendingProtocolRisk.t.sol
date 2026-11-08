@@ -58,13 +58,13 @@ contract LendingProtocolRiskTest is Test {
     function test_RevertWhen_LtvAboveLiquidationThreshold() public {
         vm.prank(owner);
         vm.expectRevert(LendingProtocol.InvalidRiskParameters.selector);
-        lending.updateMarket(address(weth), 8100, 8000);
+        lending.setLtv(address(weth), 8100);
     }
 
     function test_RevertWhen_ThresholdAboveOneHundredPercent() public {
         vm.prank(owner);
         vm.expectRevert(LendingProtocol.InvalidRiskParameters.selector);
-        lending.updateMarket(address(weth), 7500, 10_001);
+        lending.raiseLiquidationThreshold(address(weth), 10_001);
     }
 
     // ---------------------------------------------------------------- bug #1: the first borrow must be checked
