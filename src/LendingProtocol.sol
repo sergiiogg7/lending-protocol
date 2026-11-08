@@ -191,14 +191,15 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
     function deposit(address token, uint256 amount) external nonReentrant whenNotPaused onlyActiveMarket(token) {
         if (amount == 0) revert ZeroAmount();
 
-        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
-
         userDeposits[msg.sender][token] += amount;
         users[msg.sender].totalDeposited += amount;
         users[msg.sender].lastUpdateTime = block.timestamp;
         users[msg.sender].isActive = true;
 
         markets[token].totalSupply += amount;
+
+        // Interaction last (Checks-Effects-Interactions)
+        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
 
         emit Deposit(msg.sender, token, amount);
     }
@@ -259,8 +260,6 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
         if (amount == 0) revert ZeroAmount();
         if (userBorrows[msg.sender][token] < amount) revert InsufficientBorrow();
 
-        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
-
         userBorrows[msg.sender][token] -= amount;
         users[msg.sender].totalBorrowed -= amount;
         users[msg.sender].lastUpdateTime = block.timestamp;
@@ -270,6 +269,9 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
         }
 
         markets[token].totalBorrow -= amount;
+
+        // Interaction last (Checks-Effects-Interactions)
+        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
 
         emit Repay(msg.sender, token, amount);
     }
@@ -295,14 +297,15 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
         address signer = ethSignedMessageHash.recover(sigData.signature);
         if (signer != msg.sender) revert InvalidSignature();
 
-        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
-
         userDeposits[msg.sender][token] += amount;
         users[msg.sender].totalDeposited += amount;
         users[msg.sender].lastUpdateTime = block.timestamp;
         users[msg.sender].isActive = true;
 
         markets[token].totalSupply += amount;
+
+        // Interaction last (Checks-Effects-Interactions)
+        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
 
         emit Deposit(msg.sender, token, amount);
     }
@@ -330,9 +333,6 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
         if (collateralToken == address(0)) revert NoCollateralToSeize();
         if (userDeposits[user][collateralToken] < collateralToSeize) revert InsufficientCollateral();
 
-        // Transfer borrowed tokens from liquidator
-        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
-
         // Update user's borrow
         userBorrows[user][token] -= amount;
         users[user].totalBorrowed -= amount;
@@ -343,7 +343,8 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
         users[user].totalDeposited -= collateralToSeize;
         markets[collateralToken].totalSupply -= collateralToSeize;
 
-        // Transfer collateral to liquidator
+        // Interactions last: take the debt tokens from the liquidator, then pay the seized collateral
+        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
         IERC20(collateralToken).safeTransfer(msg.sender, collateralToSeize);
 
         emit Liquidate(msg.sender, user, token, amount);

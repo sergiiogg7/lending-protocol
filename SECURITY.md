@@ -14,7 +14,7 @@ The current phase only applied engineering best practices (custom errors, two-st
 | `SafeERC20` for every token transfer | `src/LendingProtocol.sol` |
 | `Ownable2Step`: ownership moves in two steps | `src/LendingProtocol.sol` |
 | Custom errors, no `require` strings | `src/LendingProtocol.sol` |
-| Checks-Effects-Interactions in `deposit`, `withdraw`, `borrow`, `repay`, `liquidate` | `src/LendingProtocol.sol` |
+| Checks-Effects-Interactions in `deposit`, `depositWithSignature`, `withdraw`, `borrow`, `repay`, `liquidate` (state is updated before any token transfer) | `src/LendingProtocol.sol` |
 | `Pausable`: `deposit`, `borrow`, `depositWithSignature` and `liquidate` can be paused; `withdraw` and `repay` stay open so users can always exit | `src/LendingProtocol.sol` |
 | Zero-address / zero-amount / collateral-factor range validation | `src/LendingProtocol.sol` |
 | Events with the user as `indexed` on every state change, including `emergencyRecover` | `src/LendingProtocol.sol` |
