@@ -82,6 +82,7 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
     uint256 public constant BASIS_POINTS = 10000;
     uint256 public constant WAD = 1e18; // scale of the health factor, rates and utilization: 1e18 means 1
     uint256 public constant RAY = 1e27; // scale of the interest indexes: 27 decimals keep rounding errors negligible
+    uint256 internal constant WAD_TO_RAY = RAY / WAD; // exactly 1e9
     uint256 public constant SECONDS_PER_YEAR = 365 days;
     uint256 public constant THRESHOLD_DECREASE_DELAY = 2 days; // notice before a lower liquidation threshold applies
 
@@ -292,6 +293,7 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
 
         uint256 balance = _userDeposit(msg.sender, token);
         if (amount == type(uint256).max) amount = balance;
+        // slither-disable-next-line incorrect-equality
         if (amount == 0) revert ZeroAmount();
         if (balance < amount) revert InsufficientDeposit();
         if (getAvailableLiquidity(token) < amount) revert InsufficientLiquidity();
@@ -336,6 +338,7 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
 
         uint256 debt = _userBorrow(msg.sender, token);
         if (amount == type(uint256).max) amount = debt;
+        // slither-disable-next-line incorrect-equality
         if (amount == 0) revert ZeroAmount();
         if (debt < amount) revert InsufficientBorrow();
 
@@ -372,6 +375,7 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
         if (healthFactor >= WAD) revert NotLiquidatable();
 
         uint256 userDebt = _userBorrow(user, debtToken);
+        // slither-disable-next-line incorrect-equality
         if (userDebt == 0) revert NoDebtToLiquidate();
 
         // Close factor: half of the debt (rounded up, so tiny debts can be cleared), or all of it when deep underwater
@@ -481,7 +485,8 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
         view
         returns (Position memory position)
     {
-        for (uint256 i = 0; i < supportedTokens.length; i++) {
+        uint256 marketCount = supportedTokens.length;
+        for (uint256 i = 0; i < marketCount; i++) {
             address supportedToken = supportedTokens[i];
             MarketState storage market = markets[supportedToken];
             if (!market.isActive) continue;
@@ -516,6 +521,8 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
      * @return The USD value, 8 decimals
      */
     function _valueInUsd(address token, uint256 amount, Math.Rounding rounding) internal view returns (uint256) {
+        // The position loops over the markets and values each asset: one oracle call per market, bounded by the market cap
+        // slither-disable-next-line calls-loop
         return Math.mulDiv(amount, oracle.getAssetPrice(token), 10 ** IERC20Metadata(token).decimals(), rounding);
     }
 
@@ -526,6 +533,7 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
 
         // Rounded down: the depositor never gets a claim larger than what was handed over
         uint256 scaled = Math.mulDiv(amount, RAY, markets[token].liquidityIndex);
+        // slither-disable-next-line incorrect-equality
         if (scaled == 0) revert ZeroAmount();
         scaledDeposits[msg.sender][token] += scaled;
         markets[token].scaledSupply += scaled;
@@ -551,6 +559,7 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
         uint256 userScaled = scaledBorrows[user][token];
         uint256 scaled = Math.mulDiv(amount, RAY, markets[token].borrowIndex);
         if (scaled > userScaled) scaled = userScaled;
+        // slither-disable-next-line incorrect-equality
         if (scaled == 0) revert ZeroAmount();
         scaledBorrows[user][token] = userScaled - scaled;
         markets[token].scaledBorrow -= scaled;
@@ -559,6 +568,7 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
     /// @dev Brings the indexes of a market up to the current block, before its balances change.
     function _accrue(address token) internal {
         MarketState storage market = markets[token];
+        // slither-disable-next-line incorrect-equality
         if (market.lastUpdateTimestamp == block.timestamp) return;
         (market.liquidityIndex, market.borrowIndex) = _indexes(market);
         market.lastUpdateTimestamp = block.timestamp;
@@ -575,10 +585,11 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
         liquidityIndex = market.liquidityIndex;
         borrowIndex = market.borrowIndex;
         uint256 elapsed = block.timestamp - market.lastUpdateTimestamp;
+        // slither-disable-next-line incorrect-equality
         if (elapsed == 0) return (liquidityIndex, borrowIndex);
 
         (uint256 supplied, uint256 borrowed) = _storedTotals(market);
-        uint256 borrowRate = _borrowRate(_utilization(market)) * (RAY / WAD);
+        uint256 borrowRate = _borrowRate(_utilization(market)) * WAD_TO_RAY;
         uint256 supplyRate =
             supplied == 0 ? 0 : Math.mulDiv(borrowRate, borrowed > supplied ? supplied : borrowed, supplied);
 

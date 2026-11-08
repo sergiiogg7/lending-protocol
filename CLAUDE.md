@@ -14,6 +14,7 @@ forge test --match-path test/LendingProtocolFuzz.t.sol
 forge coverage --no-match-coverage "script|test"  # line coverage on src/
 forge fmt --check                                 # CI enforces formatting
 forge snapshot                                    # regenerate .gas-snapshot after intentional gas changes
+slither . --exclude-dependencies --config-file slither.config.json --fail-low   # what CI runs (pip install slither-analyzer)
 ```
 
 CI (`.github/workflows/test.yml`) runs `forge fmt --check`, `forge build --sizes`, `forge test` (profile `ci`), a 95% line-coverage gate on `src/`, `forge snapshot --check` and Slither (`fail-on: low`). Copy `.env.example` to `.env` for deployment; never commit `.env`.

@@ -16,7 +16,8 @@ The current phase only applied engineering best practices (custom errors, two-st
 | Custom errors, no `require` strings | `src/LendingProtocol.sol` |
 | Checks-Effects-Interactions in `deposit`, `withdraw`, `borrow`, `repay`, `liquidate` (state is updated before any token transfer) | `src/LendingProtocol.sol` |
 | `Pausable`: `deposit`, `borrow` and `liquidate` can be paused; `withdraw` and `repay` stay open so users can always exit | `src/LendingProtocol.sol` |
-| Zero-address / zero-amount / collateral-factor range validation | `src/LendingProtocol.sol` |
+| Zero-address / zero-amount / risk-parameter range validation | `src/LendingProtocol.sol` |
+| Slither in CI with `fail-on: low`, currently 0 findings. Two detectors need an explanation: `timestamp` is excluded in `slither.config.json` because interest accrual and the two-day notice need `block.timestamp` by design and the detector flags every comparison that depends on it; `incorrect-equality` (zero checks) and `calls-loop` (one oracle call per market) are disabled line by line in the code, each with its reason | `slither.config.json`, `src/LendingProtocol.sol` |
 | Events with the user as `indexed` on every state change, including `emergencyRecover` | `src/LendingProtocol.sol` |
 
 ## Invariants (tested in `test/LendingProtocolInvariant.t.sol`)
