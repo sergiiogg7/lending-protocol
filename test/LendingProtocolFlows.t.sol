@@ -108,7 +108,6 @@ contract LendingProtocolFlowsTest is Test {
         vm.stopPrank();
 
         assertEq(lending.getUserBorrow(signer, address(weth)), 60 ether);
-        assertEq(lending.getUser(signer).totalBorrowed, 60 ether);
     }
 
     function test_RevertWhen_SecondBorrowExceedsCollateral() public {
@@ -120,29 +119,13 @@ contract LendingProtocolFlowsTest is Test {
         vm.stopPrank();
     }
 
-    function test_WithdrawEverythingDeactivatesUser() public {
+    function test_WithdrawEverythingReturnsTheDeposit() public {
         vm.startPrank(signer);
         lending.deposit(address(usdc), AMOUNT);
         lending.withdraw(address(usdc), AMOUNT);
         vm.stopPrank();
 
-        assertFalse(lending.getUser(signer).isActive);
         assertEq(usdc.balanceOf(signer), 1000 ether);
-    }
-
-    function test_UserIsActiveWhileItHoldsDepositsOrDebt() public {
-        vm.startPrank(signer);
-        lending.deposit(address(usdc), AMOUNT);
-        lending.borrow(address(weth), 10 ether);
-        lending.repay(address(weth), 10 ether);
-
-        assertEq(lending.getUserBorrow(signer, address(weth)), 0);
-        assertTrue(lending.getUser(signer).isActive); // the deposit is still there
-
-        lending.withdraw(address(usdc), AMOUNT);
-        vm.stopPrank();
-
-        assertFalse(lending.getUser(signer).isActive); // no deposits and no debt
     }
 
     function test_Liquidate() public {

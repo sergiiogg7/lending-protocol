@@ -55,7 +55,6 @@ contract LendingProtocolFuzzTest is Test {
         assertEq(usdc.balanceOf(user), 2 * MAX);
         assertEq(lending.getUserDeposit(user, address(usdc)), 0);
         assertEq(lending.getMarket(address(usdc)).totalSupply, 0);
-        assertFalse(lending.getUser(user).isActive);
     }
 
     function testFuzz_BorrowRepayRoundTrip(uint256 collateral, uint256 borrowAmount) public {

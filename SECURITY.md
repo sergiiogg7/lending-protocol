@@ -44,8 +44,8 @@ Ordered by severity. Items marked *confirmed* were reproduced with a test or pro
 | 10 | Medium | **Fee-on-transfer and rebasing tokens break accounting.** Amounts are credited as requested, not as received. Any address (even a non-token) can be added as a market. | `deposit`, `repay`, `addMarket` |
 | 11 | Low | **Unbounded loops.** Health checks iterate over `supportedTokens`, which only grows (markets cannot be removed), so gas grows with each market. | `_position`, `canBorrow`, `canWithdraw`, `findBestCollateral` |
 | 12 | ~~Low~~ **Fixed (2026-11-08)** | ~~Rates are not validated.~~ Rates are no longer inputs: `addMarket` and `updateMarket` take no rates, and the rates are computed from the utilization with constants. | `addMarket`, `updateMarket`, `getBorrowRate` |
-| 13 | ~~Low~~ **Fixed (2026-11-08)** | ~~`User.isActive` is inconsistent.~~ `_refreshActive` sets it from the balances (any deposit or debt) in `withdraw`, `repay` and `liquidate`. | `_refreshActive` |
-| 14 | Info | Redundant storage (`users`, `userDeposits`, `userBorrows`) and `MockToken` public `mint`/`burn` are for testing only. | |
+| 13 | ~~Low~~ **Obsolete (2026-11-08)** | ~~`User.isActive` is inconsistent.~~ The `User` struct was redundant (no logic read it) and has been removed, so there is no flag left to keep in sync. | removed |
+| 14 | Info | Redundant storage: the `User` struct (`users`, `getUser`) was **removed (2026-11-08)**. `MockToken` public `mint`/`burn` are for testing only. | |
 
 ## Notes on the best-practice pass
 

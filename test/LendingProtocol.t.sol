@@ -185,8 +185,6 @@ contract LendingProtocolTest is Test {
         lendingProtocol.deposit(address(usdc), DEPOSIT_AMOUNT);
 
         assertEq(lendingProtocol.getUserDeposit(user1, address(usdc)), DEPOSIT_AMOUNT);
-        assertEq(lendingProtocol.getUser(user1).totalDeposited, DEPOSIT_AMOUNT);
-        assertTrue(lendingProtocol.getUser(user1).isActive);
 
         LendingProtocol.Market memory market = lendingProtocol.getMarket(address(usdc));
         assertEq(market.totalSupply, INITIAL_LIQUIDITY + DEPOSIT_AMOUNT);
@@ -232,7 +230,6 @@ contract LendingProtocolTest is Test {
         lendingProtocol.withdraw(address(usdc), DEPOSIT_AMOUNT / 2);
 
         assertEq(lendingProtocol.getUserDeposit(user1, address(usdc)), DEPOSIT_AMOUNT / 2);
-        assertEq(lendingProtocol.getUser(user1).totalDeposited, DEPOSIT_AMOUNT / 2);
 
         LendingProtocol.Market memory market = lendingProtocol.getMarket(address(usdc));
         assertEq(market.totalSupply, INITIAL_LIQUIDITY + DEPOSIT_AMOUNT / 2);
@@ -294,8 +291,6 @@ contract LendingProtocolTest is Test {
         lendingProtocol.borrow(address(dai), BORROW_AMOUNT);
 
         assertEq(lendingProtocol.getUserBorrow(user1, address(dai)), BORROW_AMOUNT);
-        assertEq(lendingProtocol.getUser(user1).totalBorrowed, BORROW_AMOUNT);
-        assertTrue(lendingProtocol.getUser(user1).isActive);
 
         LendingProtocol.Market memory market = lendingProtocol.getMarket(address(dai));
         assertEq(market.totalBorrow, BORROW_AMOUNT);
@@ -346,7 +341,6 @@ contract LendingProtocolTest is Test {
         lendingProtocol.repay(address(dai), BORROW_AMOUNT);
 
         assertEq(lendingProtocol.getUserBorrow(user1, address(dai)), 0);
-        assertEq(lendingProtocol.getUser(user1).totalBorrowed, 0);
 
         LendingProtocol.Market memory market = lendingProtocol.getMarket(address(dai));
         assertEq(market.totalBorrow, 0);
@@ -531,23 +525,6 @@ contract LendingProtocolTest is Test {
         assertEq(market.ltv, LTV);
         assertEq(market.liquidationThreshold, LIQUIDATION_THRESHOLD);
         assertEq(market.totalSupply, INITIAL_LIQUIDITY);
-    }
-
-    function test_GetUser() public {
-        LendingProtocol.User memory user = lendingProtocol.getUser(user1);
-        assertEq(user.totalDeposited, 0);
-        assertEq(user.totalBorrowed, 0);
-        assertFalse(user.isActive);
-
-        // After deposit, user should be active
-        vm.startPrank(user1);
-        usdc.approve(address(lendingProtocol), DEPOSIT_AMOUNT);
-        lendingProtocol.deposit(address(usdc), DEPOSIT_AMOUNT);
-        vm.stopPrank();
-
-        user = lendingProtocol.getUser(user1);
-        assertEq(user.totalDeposited, DEPOSIT_AMOUNT);
-        assertTrue(user.isActive);
     }
 
     function test_GetUserDeposit() public {

@@ -88,8 +88,6 @@ contract LendingProtocolLiquidationTest is Test {
         // Market totals follow
         assertEq(lending.getMarket(address(usdc)).totalBorrow, 1250e6);
         assertEq(lending.getMarket(address(weth)).totalSupply, 1.125 ether);
-        assertEq(lending.getUser(lucia).totalBorrowed, 1250e6);
-        assertEq(lending.getUser(lucia).totalDeposited, 1.125 ether);
     }
 
     // ---------------------------------------------------------------- close factor
@@ -181,29 +179,6 @@ contract LendingProtocolLiquidationTest is Test {
         vm.prank(carlos);
         vm.expectRevert(LendingProtocol.InsufficientLiquidity.selector);
         lending.liquidate(address(weth), address(usdc), lucia, 1250e6);
-    }
-
-    // ---------------------------------------------------------------- bug #13: the active flag follows the balances
-
-    function test_IsActiveFollowsDepositsAndDebt() public {
-        oracle.setPrice(address(weth), 1400e8);
-        vm.prank(carlos);
-        lending.liquidate(address(weth), address(usdc), lucia, 2500e6); // debt cleared, 0.125 ETH left
-
-        assertTrue(lending.getUser(lucia).isActive); // still has a deposit
-
-        vm.prank(lucia);
-        lending.withdraw(address(weth), 0.125 ether);
-        assertFalse(lending.getUser(lucia).isActive); // no deposits and no debt
-    }
-
-    function test_IsActiveStaysTrueWhileDepositsRemainAfterRepaying() public {
-        usdc.mint(lucia, 2500e6);
-        vm.prank(lucia);
-        lending.repay(address(usdc), 2500e6);
-
-        assertEq(lending.getUser(lucia).totalBorrowed, 0);
-        assertTrue(lending.getUser(lucia).isActive); // she still has 2 ETH deposited
     }
 
     // ---------------------------------------------------------------- the bonus must not break the protocol

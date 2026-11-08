@@ -191,21 +191,6 @@ contract LendingProtocolInvariantTest is StdInvariant, Test {
         );
     }
 
-    /// @notice The per-user totals equal the sum of the per-token entries.
-    function invariant_UserTotalsMatchTokenEntries() public view {
-        for (uint256 i = 0; i < actors.length; i++) {
-            address a = actors[i];
-            assertEq(
-                lending.getUser(a).totalDeposited,
-                lending.getUserDeposit(a, address(usdc)) + lending.getUserDeposit(a, address(weth))
-            );
-            assertEq(
-                lending.getUser(a).totalBorrowed,
-                lending.getUserBorrow(a, address(usdc)) + lending.getUserBorrow(a, address(weth))
-            );
-        }
-    }
-
     /// @notice Ghost sums tracked by the handler equal the market totals.
     function invariant_GhostSumsMatchMarkets() public view {
         assertEq(lending.getMarket(address(usdc)).totalSupply, handler.ghostDepositsUsdc());

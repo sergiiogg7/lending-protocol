@@ -26,13 +26,6 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
     using MessageHashUtils for bytes32;
 
     // Structs
-    struct User {
-        uint256 totalDeposited; // Total amount deposited by user
-        uint256 totalBorrowed; // Total amount borrowed by user
-        uint256 lastUpdateTime; // Last time user's data was updated
-        bool isActive; // Whether user has active positions
-    }
-
     struct Market {
         IERC20 token; // The token being lent/borrowed
         uint256 totalSupply; // Total amount supplied to this market
@@ -56,7 +49,6 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
     }
 
     // State variables
-    mapping(address => User) public users;
     mapping(address => mapping(address => uint256)) public userDeposits; // user => token => amount
     mapping(address => mapping(address => uint256)) public userBorrows; // user => token => amount
     mapping(address => Market) public markets;
@@ -210,9 +202,6 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
         if (amount == 0) revert ZeroAmount();
 
         userDeposits[msg.sender][token] += amount;
-        users[msg.sender].totalDeposited += amount;
-        users[msg.sender].lastUpdateTime = block.timestamp;
-        users[msg.sender].isActive = true;
 
         markets[token].totalSupply += amount;
 
@@ -234,10 +223,6 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
         if (!canWithdraw(msg.sender, token, amount)) revert WithdrawalUnsafe();
 
         userDeposits[msg.sender][token] -= amount;
-        users[msg.sender].totalDeposited -= amount;
-        users[msg.sender].lastUpdateTime = block.timestamp;
-
-        _refreshActive(msg.sender);
 
         markets[token].totalSupply -= amount;
 
@@ -257,9 +242,6 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
         if (!canBorrow(msg.sender, token, amount)) revert BorrowExceedsCollateral();
 
         userBorrows[msg.sender][token] += amount;
-        users[msg.sender].totalBorrowed += amount;
-        users[msg.sender].lastUpdateTime = block.timestamp;
-        users[msg.sender].isActive = true;
 
         markets[token].totalBorrow += amount;
 
@@ -278,10 +260,6 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
         if (userBorrows[msg.sender][token] < amount) revert InsufficientBorrow();
 
         userBorrows[msg.sender][token] -= amount;
-        users[msg.sender].totalBorrowed -= amount;
-        users[msg.sender].lastUpdateTime = block.timestamp;
-
-        _refreshActive(msg.sender);
 
         markets[token].totalBorrow -= amount;
 
@@ -313,9 +291,6 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
         if (signer != msg.sender) revert InvalidSignature();
 
         userDeposits[msg.sender][token] += amount;
-        users[msg.sender].totalDeposited += amount;
-        users[msg.sender].lastUpdateTime = block.timestamp;
-        users[msg.sender].isActive = true;
 
         markets[token].totalSupply += amount;
 
@@ -364,15 +339,11 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
 
         // Repay the user's debt
         userBorrows[user][debtToken] -= debtToCover;
-        users[user].totalBorrowed -= debtToCover;
         markets[debtToken].totalBorrow -= debtToCover;
 
         // Seize the collateral
         userDeposits[user][collateralToken] -= collateralSeized;
-        users[user].totalDeposited -= collateralSeized;
         markets[collateralToken].totalSupply -= collateralSeized;
-
-        _refreshActive(user);
 
         // Interactions last: take the debt tokens from the liquidator, then pay the seized collateral
         IERC20(debtToken).safeTransferFrom(msg.sender, address(this), debtToCover);
@@ -450,11 +421,6 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
             Math.mulDiv(
                 valueUsd, 10 ** IERC20Metadata(collateralToken).decimals(), oracle.getAssetPrice(collateralToken)
             );
-    }
-
-    /// @dev A user is active while holding any deposit or any debt.
-    function _refreshActive(address user) internal {
-        users[user].isActive = users[user].totalDeposited > 0 || users[user].totalBorrowed > 0;
     }
 
     /**
@@ -581,15 +547,6 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
      */
     function getSupplyRate(address token) external view returns (uint256) {
         return Math.mulDiv(getBorrowRate(token), getUtilization(token), WAD);
-    }
-
-    /**
-     * @notice Get user information
-     * @param user The user address
-     * @return User information
-     */
-    function getUser(address user) external view returns (User memory) {
-        return users[user];
     }
 
     /**
