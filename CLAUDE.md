@@ -35,6 +35,7 @@ One contract in `src/`: `LendingProtocol` (`ReentrancyGuard`, `Pausable`, `Ownab
 | `LendingProtocolFuzz.t.sol` | Fuzz tests |
 | `LendingProtocolInvariant.t.sol` | Invariant tests with a handler that also skips time and changes risk parameters |
 | `LendingProtocolRisk.t.sol` | Risk model: `ltv`, `liquidationThreshold`, health factor, withdrawals, end-to-end scenario |
+| `LendingProtocolRecover.t.sol` | `emergencyRecover` only takes the surplus; deposits are untouchable; fuzz on exits |
 | `LendingProtocolInterest.t.sol` | Interest accrual with indexes: one year, several borrowers, compounding, repay and withdraw everything, solvency fuzz |
 | `LendingProtocolRates.t.sol` | Interest rate model: utilization, borrow rate curve with a kink, supply rate, fuzz |
 | `LendingProtocolLiquidity.t.sol` | Available liquidity limits `borrow` and `withdraw`; borrowing the deposited token is allowed |

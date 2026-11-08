@@ -121,6 +121,8 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
     error NotLiquidatable();
     /// @notice The user does not hold enough of the chosen collateral to pay the liquidation bonus.
     error InsufficientCollateral();
+    /// @notice The amount to recover is more than the contract holds beyond what it owes to depositors.
+    error AmountExceedsSurplus();
 
     // Events
     /// @notice Emitted when a market is added.
@@ -706,13 +708,30 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
     }
 
     /**
-     * @notice Emergency function to recover stuck tokens
+     * @notice Amount of `token` the owner may recover: what the contract holds beyond the cash backing deposits
+     * @dev The cash that backs deposits is the available liquidity (supplied minus borrowed); interest that is owed
+     *      but not yet paid is not held, so it creates no surplus. For a token without a market the available
+     *      liquidity is 0 and everything held is recoverable. Typical surplus: tokens sent by mistake, donations and
+     *      rounding dust.
+     * @param token The token address
+     * @return The recoverable amount
+     */
+    function getRecoverableAmount(address token) public view returns (uint256) {
+        uint256 balance = IERC20(token).balanceOf(address(this));
+        uint256 owedToDepositors = getAvailableLiquidity(token);
+        return balance > owedToDepositors ? balance - owedToDepositors : 0;
+    }
+
+    /**
+     * @notice Recover tokens that do not belong to depositors: sent by mistake, donated, or rounding dust
+     * @dev Never touches user funds: `amount` cannot exceed `getRecoverableAmount(token)`.
      * @param token The token to recover
      * @param to The address to send tokens to
      * @param amount The amount to recover
      */
     function emergencyRecover(address token, address to, uint256 amount) external onlyOwner {
         if (to == address(0)) revert ZeroAddress();
+        if (amount > getRecoverableAmount(token)) revert AmountExceedsSurplus();
         IERC20(token).safeTransfer(to, amount);
         emit EmergencyRecovered(token, to, amount);
     }

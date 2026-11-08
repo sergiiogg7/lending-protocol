@@ -21,7 +21,7 @@ One contract, `LendingProtocol`, holds every market. Every token is valued in US
 | Borrow | `borrow` (needs available liquidity and enough collateral for the LTV) | Anyone |
 | Repay | `repay` (`type(uint256).max` repays the whole debt, interest included) | Borrower |
 | Liquidate an unhealthy position | `liquidate` (health factor below 1: the liquidator repays up to 50 % of a debt, 100 % below 0.95, and receives the collateral of their choice worth the repaid debt plus a 5 % bonus) | Anyone |
-| Emergency controls | `pause`, `unpause`, `emergencyRecover` | Owner |
+| Emergency controls | `pause`, `unpause`, `emergencyRecover` (only the surplus the contract holds beyond what it owes to depositors) | Owner |
 
 ### Risk model
 
