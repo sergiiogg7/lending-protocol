@@ -32,9 +32,59 @@ The protocol lists at most 16 markets, which keeps the gas of the health checks 
 
 Per market, `ltv` (how much you can borrow against it) and `liquidationThreshold` (when you are liquidated), in basis points with `ltv <= liquidationThreshold`. The **health factor** is `sum(collateral usd * liquidationThreshold) / sum(debt usd)`: a position is healthy while it is at least 1 and liquidatable below 1. Borrowing is limited by the LTV, withdrawing and liquidating by the threshold, and the gap between them is the safety margin. With the 5 % liquidation bonus, a threshold can be at most 95.23 %. Collateral is valued rounding down and debt rounding up, always in favour of the protocol. `withdraw` and `repay` keep working while the protocol is paused.
 
+Each parameter gates one operation. The LTV only limits new debt; the threshold decides the health factor, which gates withdrawals and liquidations:
+
+```mermaid
+flowchart TD
+    A["Collateral in USD<br/>deposits x oracle price"] --> L["x ltv<br/>= borrowing power"]
+    A --> T["x liquidationThreshold<br/>= collateral counted by the health factor"]
+    L --> BR["borrow allowed if<br/>debt after the borrow is at most the borrowing power"]
+    T --> HF["health factor = counted collateral / debt"]
+    HF --> WD["withdraw allowed if<br/>health factor after it is at least 1"]
+    HF --> LQ["liquidatable if<br/>health factor is below 1"]
+```
+
+A liquidation repays part of the debt and pays the liquidator with collateral worth the debt plus a 5 % bonus. Example: ETH falls to 1,500 USD, Lucia (2 ETH, 2,500 USDC borrowed) has a health factor of 0.96 and Carlos liquidates her:
+
+```mermaid
+flowchart TD
+    S{"health factor<br/>below 1?"} -- "no" --> R1["revert NotLiquidatable"]
+    S -- "yes" --> C["cap the amount: 50 % of the debt<br/>(100 % if the health factor is below 0.95)<br/>2,500 USDC debt gives 1,250 USDC"]
+    C --> V["collateral = debt covered x 1.05, at oracle prices<br/>1,250 x 1.05 / 1,500 = 0.875 ETH"]
+    V --> K{"does the user hold it<br/>and does the market have the cash?"}
+    K -- "no" --> R2["revert InsufficientCollateral<br/>or InsufficientLiquidity"]
+    K -- "yes" --> X["Carlos pays 1,250 USDC and receives 0.875 ETH<br/>Lucia: debt 1,250 USDC, 1.125 ETH, health factor 1.08"]
+```
+
 ### Interest
 
 Rates are not set by anyone: they are computed from the utilization `borrowed / supplied`. The borrow rate follows a curve with a kink at 80 % utilization (0 % at no use, 4 % at the kink, 79 % at 100 %), and the supply rate is `borrowRate * utilization`, so depositors earn everything borrowers pay (no reserve factor). Interest accrues with two indexes per market, `liquidityIndex` and `borrowIndex`: balances are stored scaled (`amount / index`) and read as `scaled * index`, so growing one number grows the balance of every user. Indexes have 27 decimals (`RAY`, as in Aave) and are updated on every interaction with the market; the views project them to the current block.
+
+![Interest rate by utilization: the borrow rate follows a curve with a kink at 80 % and the supply rate is the borrow rate times the utilization](diagrams/interest-rate-curve.svg)
+
+*Generated from the constants of the contract with `python diagrams/generate_rate_curve.py`, so it cannot drift from the code.*
+
+Who pays and who earns, with the numbers of the tests (1,000 USDC supplied, 800 borrowed, so utilization is 80 %): what borrowers pay is exactly what depositors earn, so the supply rate is the interest shared among everything supplied, including the cash that is not lent.
+
+```mermaid
+flowchart LR
+    B["Borrowers<br/>owe 800"] -- "pay 32 a year<br/>800 x 4.0 %" --> M(("Market<br/>1,000 supplied<br/>200 free"))
+    M -- "earn 32 a year<br/>1,000 x 3.2 %" --> D["Depositors<br/>hold 1,000"]
+```
+
+Why a debt can grow without touching any account: each user stores a scaled amount and the market keeps one index; the visible balance is `stored x index`. Alice borrows 400 now and Bob borrows 400 one year later (the numbers of `LendingProtocolInterest.t.sol`):
+
+```mermaid
+sequenceDiagram
+    participant A as Alice
+    participant M as Market (borrowIndex)
+    participant B as Bob
+    A->>M: borrow 400 at index 1.00, stores 400
+    Note over M: one year at 2 %, index 1.00 becomes 1.02
+    B->>M: borrow 400 at index 1.02, stores 400 / 1.02 = 392.16
+    Note over M: Alice owes 400 x 1.02 = 408, Bob owes 392.16 x 1.02 = 400
+    Note over M: from here both grow with the same index, each paying only for its own time
+```
 
 ## Usage example
 
@@ -87,7 +137,8 @@ It deploys a mock price oracle (every token at 1 USD), the protocol and two mock
 ```
 src/LendingProtocol.sol        protocol
 src/interfaces/IPriceOracle.sol  price source (USD, 8 decimals)
-test/                          unit, fuzz and invariant tests, mocks (token and price oracle)
+test/                          unit, fuzz and invariant tests, mocks (token, fee-on-transfer token and price oracle)
+diagrams/                      interest-rate-curve.svg and the script that generates it from the contract
 script/                        Deploy.s.sol, LocalDeploy.s.sol
 SECURITY.md                    measures, invariants and known vulnerabilities
 PLAN.md                        phase 2 roadmap and what was changed

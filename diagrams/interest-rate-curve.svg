@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 430" width="760" height="430" role="img" aria-labelledby="t d">
+<title id="t">Interest rate by utilization</title>
+<desc id="d">Borrow rate rises slowly up to 80 % utilization (4 %) and steeply after it, reaching 79 % at 100 %. The supply rate is the borrow rate times the utilization and meets it at 100 %.</desc>
+<style>
+  text { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .ink { fill: #1f2328; } .mut { fill: #59636e; }
+  .grid { stroke: #d1d9e0; stroke-width: 1; } .axis { stroke: #8c959f; stroke-width: 1; }
+  .kink { stroke: #8c959f; stroke-width: 1; stroke-dasharray: 5 4; }
+  .b { stroke: #2a78d6; } .s { stroke: #eb6834; } .bf { fill: #2a78d6; } .sf { fill: #eb6834; }
+  .line { fill: none; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+  @media (prefers-color-scheme: dark) {
+    .ink { fill: #e6edf3; } .mut { fill: #9198a1; }
+    .grid { stroke: #30363d; } .axis { stroke: #6e7681; } .kink { stroke: #6e7681; }
+    .b { stroke: #3987e5; } .s { stroke: #d95926; } .bf { fill: #3987e5; } .sf { fill: #d95926; }
+  }
+</style>
+<text class="ink" x="66" y="26" font-size="16" font-weight="600">Interest rate by utilization</text>
+<text class="mut" x="66" y="46" font-size="12.5">annual rates, as computed by getBorrowRate and getSupplyRate</text>
+<line class="line b" x1="482" x2="504" y1="20" y2="20"/><text class="ink" x="512" y="24" font-size="12.5">Borrowers pay (borrow)</text>
+<line class="line s" x1="482" x2="504" y1="40" y2="40"/><text class="ink" x="512" y="44" font-size="12.5">Depositors earn (supply = borrow × U)</text>
+<line class="grid" x1="66" x2="732" y1="372.0" y2="372.0"/><text class="mut" x="56" y="376.0" font-size="12" text-anchor="end">0 %</text>
+<line class="grid" x1="66" x2="732" y1="295.0" y2="295.0"/><text class="mut" x="56" y="299.0" font-size="12" text-anchor="end">20 %</text>
+<line class="grid" x1="66" x2="732" y1="218.0" y2="218.0"/><text class="mut" x="56" y="222.0" font-size="12" text-anchor="end">40 %</text>
+<line class="grid" x1="66" x2="732" y1="141.0" y2="141.0"/><text class="mut" x="56" y="145.0" font-size="12" text-anchor="end">60 %</text>
+<line class="grid" x1="66" x2="732" y1="64.0" y2="64.0"/><text class="mut" x="56" y="68.0" font-size="12" text-anchor="end">80 %</text>
+<text class="mut" x="66.0" y="390" font-size="12" text-anchor="start">0 %</text>
+<text class="mut" x="132.6" y="390" font-size="12" text-anchor="middle">10 %</text>
+<text class="mut" x="199.2" y="390" font-size="12" text-anchor="middle">20 %</text>
+<text class="mut" x="265.8" y="390" font-size="12" text-anchor="middle">30 %</text>
+<text class="mut" x="332.4" y="390" font-size="12" text-anchor="middle">40 %</text>
+<text class="mut" x="399.0" y="390" font-size="12" text-anchor="middle">50 %</text>
+<text class="mut" x="465.6" y="390" font-size="12" text-anchor="middle">60 %</text>
+<text class="mut" x="532.2" y="390" font-size="12" text-anchor="middle">70 %</text>
+<text class="mut" x="598.8" y="390" font-size="12" text-anchor="middle">80 %</text>
+<text class="mut" x="665.4" y="390" font-size="12" text-anchor="middle">90 %</text>
+<text class="mut" x="732.0" y="390" font-size="12" text-anchor="end">100 %</text>
+<line class="axis" x1="66" x2="732" y1="372" y2="372"/>
+<text class="ink" x="399.0" y="420" font-size="13" text-anchor="middle">Utilization = borrowed ÷ supplied</text>
+<line class="kink" x1="598.8" x2="598.8" y1="64" y2="372"/>
+<text class="mut" x="590.8" y="78" font-size="12" text-anchor="end">gentle slope up to the 80 % kink</text>
+<text class="mut" x="606.8" y="78" font-size="12">steep after it</text>
+<path class="line b" d="M66.0 372.0 L72.7 371.8 L79.3 371.6 L86.0 371.4 L92.6 371.2 L99.3 371.0 L106.0 370.8 L112.6 370.7 L119.3 370.5 L125.9 370.3 L132.6 370.1 L139.3 369.9 L145.9 369.7 L152.6 369.5 L159.2 369.3 L165.9 369.1 L172.6 368.9 L179.2 368.7 L185.9 368.5 L192.5 368.3 L199.2 368.2 L205.9 368.0 L212.5 367.8 L219.2 367.6 L225.8 367.4 L232.5 367.2 L239.2 367.0 L245.8 366.8 L252.5 366.6 L259.1 366.4 L265.8 366.2 L272.5 366.0 L279.1 365.8 L285.8 365.6 L292.4 365.5 L299.1 365.3 L305.8 365.1 L312.4 364.9 L319.1 364.7 L325.7 364.5 L332.4 364.3 L339.1 364.1 L345.7 363.9 L352.4 363.7 L359.0 363.5 L365.7 363.3 L372.4 363.1 L379.0 363.0 L385.7 362.8 L392.3 362.6 L399.0 362.4 L405.7 362.2 L412.3 362.0 L419.0 361.8 L425.6 361.6 L432.3 361.4 L439.0 361.2 L445.6 361.0 L452.3 360.8 L458.9 360.6 L465.6 360.4 L472.3 360.3 L478.9 360.1 L485.6 359.9 L492.2 359.7 L498.9 359.5 L505.6 359.3 L512.2 359.1 L518.9 358.9 L525.5 358.7 L532.2 358.5 L538.9 358.3 L545.5 358.1 L552.2 357.9 L558.8 357.8 L565.5 357.6 L572.2 357.4 L578.8 357.2 L585.5 357.0 L592.1 356.8 L598.8 356.6 L605.5 342.2 L612.1 327.7 L618.8 313.3 L625.4 298.9 L632.1 284.4 L638.8 270.0 L645.4 255.5 L652.1 241.1 L658.7 226.7 L665.4 212.2 L672.1 197.8 L678.7 183.3 L685.4 168.9 L692.0 154.5 L698.7 140.0 L705.4 125.6 L712.0 111.2 L718.7 96.7 L725.3 82.3 L732.0 67.8"/>
+<path class="line s" d="M66.0 372.0 L72.7 372.0 L79.3 372.0 L86.0 372.0 L92.6 372.0 L99.3 372.0 L106.0 371.9 L112.6 371.9 L119.3 371.9 L125.9 371.8 L132.6 371.8 L139.3 371.8 L145.9 371.7 L152.6 371.7 L159.2 371.6 L165.9 371.6 L172.6 371.5 L179.2 371.4 L185.9 371.4 L192.5 371.3 L199.2 371.2 L205.9 371.2 L212.5 371.1 L219.2 371.0 L225.8 370.9 L232.5 370.8 L239.2 370.7 L245.8 370.6 L252.5 370.5 L259.1 370.4 L265.8 370.3 L272.5 370.2 L279.1 370.0 L285.8 369.9 L292.4 369.8 L299.1 369.6 L305.8 369.5 L312.4 369.4 L319.1 369.2 L325.7 369.1 L332.4 368.9 L339.1 368.8 L345.7 368.6 L352.4 368.4 L359.0 368.3 L365.7 368.1 L372.4 367.9 L379.0 367.7 L385.7 367.6 L392.3 367.4 L399.0 367.2 L405.7 367.0 L412.3 366.8 L419.0 366.6 L425.6 366.4 L432.3 366.2 L439.0 366.0 L445.6 365.7 L452.3 365.5 L458.9 365.3 L465.6 365.1 L472.3 364.8 L478.9 364.6 L485.6 364.4 L492.2 364.1 L498.9 363.9 L505.6 363.6 L512.2 363.4 L518.9 363.1 L525.5 362.8 L532.2 362.6 L538.9 362.3 L545.5 362.0 L552.2 361.7 L558.8 361.5 L565.5 361.2 L572.2 360.9 L578.8 360.6 L585.5 360.3 L592.1 360.0 L598.8 359.7 L605.5 347.8 L612.1 335.7 L618.8 323.3 L625.4 310.6 L632.1 297.6 L638.8 284.3 L645.4 270.7 L652.1 256.8 L658.7 242.6 L665.4 228.2 L672.1 213.5 L678.7 198.4 L685.4 183.1 L692.0 167.5 L698.7 151.6 L705.4 135.5 L712.0 119.0 L718.7 102.2 L725.3 85.2 L732.0 67.8"/>
+<circle class="bf" cx="332.4" cy="364.3" r="4.5"/>
+<circle class="sf" cx="332.4" cy="368.9" r="4.5"/>
+<circle class="bf" cx="598.8" cy="356.6" r="4.5"/>
+<circle class="sf" cx="598.8" cy="359.7" r="4.5"/>
+<circle class="bf" cx="665.4" cy="212.2" r="4.5"/>
+<circle class="sf" cx="665.4" cy="228.2" r="4.5"/>
+<circle class="bf" cx="732.0" cy="67.8" r="4.5"/>
+<text class="ink" x="84" y="90" font-size="13" font-weight="600">Marked points</text>
+<text class="mut" x="202" y="90" font-size="12">borrow pays · supply earns</text>
+<text class="ink" x="84" y="112" font-size="13">U = 40 %</text>
+<text class="ink" x="202" y="112" font-size="13">2 % · 0.8 %</text>
+<text class="ink" x="84" y="134" font-size="13">U = 80 %  (kink)</text>
+<text class="ink" x="202" y="134" font-size="13">4 % · 3.2 %</text>
+<text class="ink" x="84" y="156" font-size="13">U = 90 %</text>
+<text class="ink" x="202" y="156" font-size="13">41.5 % · 37.35 %</text>
+<text class="ink" x="84" y="178" font-size="13">U = 100 %</text>
+<text class="ink" x="202" y="178" font-size="13">79 % · 79 %</text>
+</svg>
