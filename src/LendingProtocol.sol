@@ -55,7 +55,7 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
 
     /// @dev A proposed decrease of the liquidation threshold of a market, waiting for its delay.
     struct PendingThreshold {
-        uint256 threshold; // The proposed liquidation threshold
+        uint256 liquidationThreshold; // The proposed liquidation threshold
         uint256 executableAt; // Timestamp from which it can be executed; 0 when nothing is pending
     }
 
@@ -246,7 +246,7 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
         _checkRiskParameters(markets[token].ltv, newThreshold);
 
         uint256 executableAt = block.timestamp + THRESHOLD_DECREASE_DELAY;
-        pendingThresholds[token] = PendingThreshold({threshold: newThreshold, executableAt: executableAt});
+        pendingThresholds[token] = PendingThreshold({liquidationThreshold: newThreshold, executableAt: executableAt});
         emit LiquidationThresholdDecreaseProposed(token, newThreshold, executableAt);
     }
 
@@ -261,11 +261,11 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
         if (block.timestamp < pending.executableAt) revert ChangeNotReady();
 
         uint256 ltv = markets[token].ltv;
-        _checkRiskParameters(ltv, pending.threshold);
+        _checkRiskParameters(ltv, pending.liquidationThreshold);
 
         delete pendingThresholds[token];
-        markets[token].liquidationThreshold = pending.threshold;
-        emit MarketUpdated(token, ltv, pending.threshold);
+        markets[token].liquidationThreshold = pending.liquidationThreshold;
+        emit MarketUpdated(token, ltv, pending.liquidationThreshold);
     }
 
     /**
@@ -766,7 +766,7 @@ contract LendingProtocol is ReentrancyGuard, Pausable, Ownable2Step {
         returns (uint256 threshold, uint256 executableAt)
     {
         PendingThreshold memory pending = pendingThresholds[token];
-        return (pending.threshold, pending.executableAt);
+        return (pending.liquidationThreshold, pending.executableAt);
     }
 
     /**
